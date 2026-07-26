@@ -66,5 +66,7 @@ for everyone including the maintainer. See
 
 ---
 
-Part of the `ha-*`/Raspberry Pi toolkit — see also
-[ha-sun-blind-automation](https://github.com/ftrauernicht/ha-sun-blind-automation).
+Another self-contained home-infrastructure project of mine:
+[ha-sun-blind-automation](https://github.com/ftrauernicht/ha-sun-blind-automation)
+(unrelated domain — Home Assistant blind automation, not backups — but the
+same "generic, documented, testable template" approach).
