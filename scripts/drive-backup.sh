@@ -69,7 +69,8 @@ log() {
 send_mail() {
   local subject="$1"
   local body="$2"
-  local msgid="<$(date +%s%N).drive-backup@$(hostname)>"
+  local msgid
+  msgid="<$(date +%s%N).drive-backup@$(hostname)>"
   if [ ! -f "$RECIPIENTS_FILE" ]; then
     log "WARNING: recipients file $RECIPIENTS_FILE is missing, mail not sent: $subject"
     return
