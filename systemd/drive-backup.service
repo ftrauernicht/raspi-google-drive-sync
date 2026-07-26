@@ -1,0 +1,8 @@
+[Unit]
+Description=Google Drive Backup Sync
+After=network-online.target mnt-backup.mount
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/drive-backup.sh
