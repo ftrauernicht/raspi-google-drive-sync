@@ -145,16 +145,22 @@ then a real physical) drive failure mid-sync:
    logic ever ran. Fixed by making the log write itself failure-tolerant
    (`|| true`). Without this fix, the watchdog would detect the stall but
    never actually act on it.
-2. **`mapfile`/`readarray` can return exit code 1 on Bash 5.2 even when it
-   read the data correctly.** Reproduced empirically: the array was
-   populated with the exact expected content, yet the command's own exit
-   status was 1. Under `set -e`, this silently aborted the script
-   immediately after the (successful) sync step, before it could log
-   completion or ping the dead-man switch. Fixed with `|| true` on that
-   specific line, after first ruling out (via isolated tests) that a
-   `mapfile < <(pipeline)` process-substitution pattern was the cause — it
-   wasn't the root cause, but the temp-file-based rewrite is the more
-   robust pattern regardless, so both changes were kept.
+2. **`GROUPS` is a bash special variable — don't use it as a regular array
+   name.** The Takeout-cleanup step originally read the grouped export
+   names into an array called `GROUPS`. `GROUPS` is bash's own builtin
+   variable holding the shell's group-ID list; assigning to it — even via
+   `mapfile -t GROUPS < file` — silently fails (non-zero exit) *and leaves
+   the array unchanged*, i.e. it does not actually load the file's data at
+   all. This was first misdiagnosed as a generic "`mapfile` returns exit
+   code 1 on some Bash 5.2 builds even though it read the data correctly"
+   quirk and papered over with `|| true` — which silenced the exit code but
+   left the array populated with the shell's own group IDs instead of the
+   real Takeout data, meaning the retention logic was operating on the
+   wrong information (see `tests/test_takeout_grouping.sh`, which
+   reproduces both the broken and the fixed behavior directly). The actual
+   fix was renaming the array to `TAKEOUT_GROUPS`, after which no `|| true`
+   is needed at all — it's a real, unrelated-to-Bash-version bug, not a
+   version quirk to work around.
 
 After both fixes, the failure path was verified end-to-end multiple times:
 twice via a software-simulated USB disconnect (`echo 0 >

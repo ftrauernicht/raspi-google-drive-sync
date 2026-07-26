@@ -288,9 +288,10 @@ fi
 # without it, a full photo-library export every 2 months would eventually
 # fill the pool)
 if [ -d "$TAKEOUT_DIR" ]; then
-  # Via a temp file rather than "mapfile < <(...)" - the latter showed
-  # non-deterministic failures under "set -e" combined with a multi-stage
-  # pipe through process substitution (a known Bash quirk) during testing.
+  # Via a temp file rather than "mapfile < <(...)" - the process-substitution
+  # form isn't wrong per se (the real bug turned out to be the variable name
+  # below, not this), but a temp file avoids subshell-scoping surprises in
+  # general and is easy to reason about.
   TAKEOUT_GROUPS_TMP=$(mktemp)
   # Google Takeout groups files as "takeout-<date>T<time>Z-<part>.zip"; a
   # failed first attempt can produce a second batch a few seconds later
