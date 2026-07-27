@@ -213,9 +213,22 @@ the device.
 One easy-to-miss subtlety: the daily script only pings on **success**, at
 the very end. A legitimately long run (the multi-day initial sync, or any
 unusually slow day) would otherwise exceed the grace period and trigger a
-false alarm. Fixed by sending healthchecks.io's `/start` signal right after
-the mount check passes — this pauses their lateness detection for the
-duration of the run, which is exactly what that signal exists for.
+false alarm. Sending healthchecks.io's `/start` signal right after the
+mount check passes helps, but **does not pause detection indefinitely** —
+we initially assumed it did, and got a real false alarm ~14 hours into the
+actual initial sync as a result. What `/start` actually does: healthchecks.io
+expects the final "success" ping within the **configured Grace Time**,
+counted from the `/start` timestamp, not from the last successful run. With
+Grace Time set to 12h (correct for the few-minutes-long daily runs), a
+multi-day initial sync blows straight through it and triggers exactly the
+alarm the switch is supposed to avoid.
+
+**Practical fix during the initial sync:** raise Grace Time manually (up to
+365 days is allowed) for its duration, then set it back to a normal value
+(e.g. 12h) once daily incremental runs take over. A cleaner fix — detecting
+the very first run (empty backup target) and setting a longer Grace Time via
+the healthchecks.io API automatically, then reverting it — is a natural next
+step but not implemented yet.
 
 ## systemd timer instead of cron
 
