@@ -19,6 +19,31 @@ the restore side.
 
 ## Key design decisions
 
+```
+            Google Drive + Google Photos (cloud)
+                             |
+  read-only OAuth (drive.readonly) -- can never write back
+                             v
+             +--------------------------------+
+             |          Raspberry Pi          |
+             |    rclone copy (never sync)    |
+             | + stall watchdog + auto-reboot |
+             +--------------------------------+
+                             |
+                  mergerfs pool (not RAID)
+                             |
+   +--------------------------+-------------------------+
+   |                          |                         |
+   +-----------------------+    +-----------------------+
+   |         Disk A        |    |         Disk B        |
+   | plain files, readable |    | plain files, readable |
+   |  standalone in any PC |    |  standalone in any PC |
+   +-----------------------+    +-----------------------+
+
+(each file lives entirely on ONE disk -- either drive keeps
+ working standalone in any other computer if the Pi dies)
+```
+
 - **mergerfs pool, not RAID** — two drives merged into one pool, but every
   file lives entirely on a single physical disk. Either drive keeps working
   standalone in any other computer; no array to rebuild if the Pi itself
