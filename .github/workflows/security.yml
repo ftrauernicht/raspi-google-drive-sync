@@ -1,0 +1,48 @@
+name: Security
+
+# Defense-in-depth for the repo's own hard rule: never hardcode real
+# credentials, hostnames, IPs, or email addresses (see CLAUDE.md). This
+# catches what slips past manual review, including in history.
+
+on:
+  # Manual trigger for on-demand pipeline testing (Actions -> Run workflow).
+  workflow_dispatch: {}
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  gitleaks:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        # fetch-depth: 0 so historical secrets (not just the current tree) are scanned.
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Install gitleaks
+        # Uses the gitleaks CLI directly (upstream GitHub release) rather than
+        # gitleaks/gitleaks-action@v2, to avoid that action's dependency on a
+        # GITLEAKS_LICENSE org secret. Pinned to a fixed version AND verified
+        # against the official SHA256 before it is unpacked or run.
+        env:
+          GITLEAKS_VERSION: "8.30.1"
+          # SHA256 of gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz from the official
+          # release checksums. Bump together with GITLEAKS_VERSION (manual pin).
+          GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+        run: |
+          curl -sSfL -o gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf gitleaks.tar.gz gitleaks
+          chmod +x gitleaks
+
+      - name: Run gitleaks (secret scan)
+        # A detected secret exits non-zero and fails this job. --redact keeps the
+        # actual secret value out of the logs.
+        run: ./gitleaks detect --source . --redact --exit-code 1

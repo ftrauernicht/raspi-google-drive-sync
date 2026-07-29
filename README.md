@@ -1,5 +1,10 @@
 # raspi-google-drive-sync
 
+[![Validate](https://github.com/ftrauernicht/raspi-google-drive-sync/actions/workflows/validate.yml/badge.svg)](https://github.com/ftrauernicht/raspi-google-drive-sync/actions/workflows/validate.yml)
+[![Security](https://github.com/ftrauernicht/raspi-google-drive-sync/actions/workflows/security.yml/badge.svg)](https://github.com/ftrauernicht/raspi-google-drive-sync/actions/workflows/security.yml)
+[![Link Check](https://github.com/ftrauernicht/raspi-google-drive-sync/actions/workflows/link-check.yml/badge.svg)](https://github.com/ftrauernicht/raspi-google-drive-sync/actions/workflows/link-check.yml)
+[![License: MIT](https://img.shields.io/github/license/ftrauernicht/raspi-google-drive-sync)](LICENSE)
+
 A local, self-healing backup of a Google Drive (+ Google Photos, via
 Takeout) account onto a Raspberry Pi with two USB drives — built to run
 unattended for years on genuinely weak, old hardware (originally a
