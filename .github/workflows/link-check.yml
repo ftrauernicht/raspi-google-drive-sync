@@ -1,0 +1,30 @@
+name: Link Check
+
+# Catches dead links in the docs (README, CONTRIBUTING, docs/) - both
+# external URLs and the relative links between README/docs/scripts that
+# this repo relies on to point the reader at the right file.
+
+on:
+  # Manual trigger for on-demand pipeline testing (Actions -> Run workflow).
+  workflow_dispatch: {}
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lychee:
+    name: Markdown link check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Link Checker
+        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8  # v2.9.0
+        with:
+          fail: true
+          args: --verbose --no-progress --exclude-mail './**/*.md'
