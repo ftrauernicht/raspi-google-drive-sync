@@ -72,4 +72,15 @@ for checks in 105000 112000 121817 125177 130500; do
 done
 assert_eq "$([ "$MAX_STALLED_SEEN" -lt "$STALL_SECONDS" ] && echo yes || echo no)" "yes" "a post-transfer verification pass with advancing checks (but flat bytes) is never flagged as stalled"
 
+# Static regression guard for a real production incident: the curl call
+# that fetches /core/stats MUST fall back with "|| true". Without it, a
+# single failed connection attempt (curl exit 7) kills the entire script
+# instantly and silently under `set -e` - no error mail, no log line. This
+# happened for real: a run finished 2.5h of verification work and simply
+# vanished, because this exact line was missing "|| true" when the
+# checks-tracking feature was first added.
+SCRIPT=../scripts/drive-backup.sh
+STATS_LINE=$(grep -n 'STATS_JSON=\$(curl' "$SCRIPT")
+assert_eq "$(echo "$STATS_LINE" | grep -c '|| true')" "1" "the /core/stats curl call in $SCRIPT falls back with '|| true' (a failed request must not kill the whole script)"
+
 assert_summary
