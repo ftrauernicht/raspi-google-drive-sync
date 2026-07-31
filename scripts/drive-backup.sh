@@ -236,6 +236,7 @@ log "Starting rclone copy (EXTRA_RCLONE_FLAGS='$EXTRA_RCLONE_FLAGS', stall limit
 rclone copy gdrive: "$DRIVE_TARGET" \
     --transfers 2 --checkers 4 \
     --drive-export-formats docx,xlsx,pptx \
+    --drive-acknowledge-abuse \
     --log-file "$LOG_FILE" --log-level INFO \
     --rc --rc-addr "$RC_ADDR" --rc-no-auth \
     $EXTRA_RCLONE_FLAGS &
@@ -258,7 +259,13 @@ while kill -0 "$RCLONE_PID" 2>/dev/null; do
   # then got killed twice in a row (30 min apart) while it was purely
   # verifying ~280k already-copied files - a false positive from watching
   # bytes alone.
-  STATS_JSON=$(curl -s -m 5 -X POST -d '{}' "http://$RC_ADDR/core/stats" 2>/dev/null)
+  # "|| true" here is not optional: a failed curl call (e.g. exit 7,
+  # "couldn't connect") would otherwise kill this ENTIRE script instantly
+  # and silently under `set -e` - no error mail, no log line. Happened in
+  # production: a real run finished 2.5h of verification work and then
+  # simply vanished, because this exact line was missing its "|| true"
+  # when the checks-tracking feature above was first added.
+  STATS_JSON=$(curl -s -m 5 -X POST -d '{}' "http://$RC_ADDR/core/stats" 2>/dev/null || true)
   CURRENT_BYTES=$(echo "$STATS_JSON" | grep -o '"bytes": *[0-9]*' | head -1 | grep -o '[0-9]*' || true)
   CURRENT_CHECKS=$(echo "$STATS_JSON" | grep -o '"checks": *[0-9]*' | head -1 | grep -o '[0-9]*' || true)
   CURRENT_BYTES=${CURRENT_BYTES:-$LAST_BYTES}

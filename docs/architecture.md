@@ -47,6 +47,23 @@ worth knowing:
   after 7 days regardless of use. An unverified production app is capped at
   100 users, which is a non-issue for a single-account personal tool.
 
+### A note on `--drive-acknowledge-abuse`
+
+Google flags some files as malware/spam and refuses to serve them without
+this flag, regardless of read-only scope. The default here is to set the
+flag and back them up anyway: this is a **personal backup of files the
+account owner already possesses**, not a public file-sharing surface, and
+Google's automated scanner can and does flag legitimate old files (compiled
+`.exe`/`.dll` binaries from personal dev projects, old archives) as a false
+positive. Skipping the flag instead means those files — and any destination
+directory whose *entire* contents were skipped files — are silently absent
+from the backup, which defeats the point of a backup tool for exactly the
+files someone is least likely to remember to check for. If you'd rather not
+acknowledge Google's abuse flag automatically, drop `--drive-acknowledge-abuse`
+from `scripts/drive-backup.sh` — the sync still works, it just skips those
+files (and logs a `cannotDownloadAbusiveFile` error for each one, every run,
+for as long as they remain flagged).
+
 ## Why a separate Gmail account for notifications
 
 The notification emails are sent from a **dedicated** Google account,
@@ -193,6 +210,23 @@ field from `/core/stats` and only treats a run as stalled when **neither**
 `bytes` **nor** `checks` has moved for `STALL_MINUTES`. General lesson: a
 watchdog for a multi-phase job needs to watch every phase's own progress
 signal, not just the one that happens to dominate most of the run.
+
+**A worse bug introduced by the fix above:** the new line that fetches
+`/core/stats` was missing its own `|| true`, unlike the two field-extraction
+lines right below it. Under `set -e`, a single failed `curl` call (exit 7,
+"couldn't connect" — plausible right as rclone's RC server is shutting down
+at the very end of a run) killed the **entire script instantly and
+silently**: no error mail, no log line, nothing — worse than the bug it was
+meant to fix. Found in production: a real run finished 2.5 hours of
+verification work on ~900k files and then simply vanished. Fixed by adding
+the missing `|| true`, reproduced in isolation first (the unpatched line
+provably dies silently on a real connection failure; the patched one
+survives), and guarded with a static test that greps the script for the
+fallback rather than relying on remembering it. General lesson: when a fix
+touches error-handling-sensitive code under `set -e`, every new command
+substitution needs the same defensive pattern as its neighbors — "add one
+line, forget the safety net on it" is an easy way to make a watchdog fix
+introduce a worse, fully silent failure mode.
 
 ## Automatic reboot on mount problems, with a cooldown
 
