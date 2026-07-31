@@ -228,6 +228,54 @@ substitution needs the same defensive pattern as its neighbors — "add one
 line, forget the safety net on it" is an easy way to make a watchdog fix
 introduce a worse, fully silent failure mode.
 
+## Deploying a script update while a run might be in progress
+
+Updating `drive-backup.sh` looks harmless — copy the new version over the
+old one, done. But this script's own runs can last for days (the initial
+sync), so "copy the new version over the old one" can happen *while an
+instance of the old version is still executing*.
+
+That interacts badly with how the shell reads a script file. Bash doesn't
+necessarily slurp an entire long script into memory up front — for a script
+that runs for hours, it re-reads chunks from the file as execution reaches
+them. If the file's contents on disk change underneath a running process —
+different byte offsets because lines were added or edited — the interpreter's
+read position loses its correspondence to the new content. The running
+process doesn't error out cleanly; it starts parsing garbage from whatever
+byte offset it lands on next, producing confusing, unrelated-looking syntax
+errors (e.g. a stray `break: only meaningful in a 'for', 'while', or 'until'
+loop` followed by `syntax error near unexpected token 'fi'`) instead of a
+clean failure. `bash -n` on the file — before *or* after the edit — reports
+no problem at all, because both versions are individually valid; the defect
+only exists in the act of swapping one for the other mid-execution.
+
+This happened in production: a script update was copied directly onto
+`/usr/local/bin/drive-backup.sh` while the previous day's run was still in
+its watchdog loop. The running process hit exactly this failure a couple of
+hours later, exiting with a cryptic status instead of a clean error report.
+
+**The fix is to never overwrite the live file in place.** Deploy by writing
+the new version to a temporary file *in the same directory* (so it's on the
+same filesystem — `/tmp` is commonly a separate `tmpfs` mount, which would
+make the next step non-atomic), verify it with `bash -n`, then `mv` it over
+the target path:
+
+```sh
+scp drive-backup.sh pi-host:/usr/local/bin/.drive-backup.sh.new
+ssh pi-host '
+  bash -n /usr/local/bin/.drive-backup.sh.new &&
+  chmod +x /usr/local/bin/.drive-backup.sh.new &&
+  mv -f /usr/local/bin/.drive-backup.sh.new /usr/local/bin/drive-backup.sh
+'
+```
+
+A rename within the same filesystem is atomic: a process that already has
+the old file open keeps reading its old inode undisturbed to completion,
+while any new invocation resolves the filename to the new inode from that
+point on. It's also worth checking `ps aux | grep drive-backup.sh` before
+deploying, but the atomic-rename pattern is what actually makes the update
+safe regardless — it doesn't depend on remembering to check.
+
 ## Automatic reboot on mount problems, with a cooldown
 
 A drive that loses and regains power mid-run does **not** self-heal: it can
