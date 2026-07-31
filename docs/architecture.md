@@ -181,6 +181,19 @@ reproduce afterward. If it ever happens in practice, the dead-man switch
 "/start"-scoped ping arrives, and healthchecks.io eventually alerts anyway
 — just without the specific diagnosis.
 
+**A real false positive, found by the actual initial sync itself:** after
+running for 4.5 days, the initial sync's data transfer genuinely finished —
+0 bytes left to move. rclone then spent 30+ minutes purely *verifying*
+roughly 280,000 already-copied files against the source (pure CPU work, no
+new bytes). The watchdog, watching only `bytes`, misread that as a stall
+and killed a fully-successful run — twice in a row, because the queued
+daily-timer run immediately took over (per the overlap protection above)
+and hit the exact same wall. Fix: the watchdog now also polls the `checks`
+field from `/core/stats` and only treats a run as stalled when **neither**
+`bytes` **nor** `checks` has moved for `STALL_MINUTES`. General lesson: a
+watchdog for a multi-phase job needs to watch every phase's own progress
+signal, not just the one that happens to dominate most of the run.
+
 ## Automatic reboot on mount problems, with a cooldown
 
 A drive that loses and regains power mid-run does **not** self-heal: it can

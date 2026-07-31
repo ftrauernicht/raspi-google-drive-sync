@@ -243,23 +243,35 @@ RCLONE_PID=$!
 
 STALL_SECONDS=$(( STALL_MINUTES * 60 ))
 LAST_BYTES=-1
+LAST_CHECKS=-1
 STALLED_FOR=0
 WAS_KILLED_FOR_STALL=0
 while kill -0 "$RCLONE_PID" 2>/dev/null; do
   sleep "$STALL_CHECK_INTERVAL"
-  # Real byte progress, not log-file size — a single large file only logs
-  # on completion, which would otherwise misclassify a legitimately long
-  # transfer as "stalled".
-  CURRENT_BYTES=$(curl -s -m 5 -X POST -d '{}' "http://$RC_ADDR/core/stats" 2>/dev/null | grep -o '"bytes": *[0-9]*' | head -1 | grep -o '[0-9]*' || true)
+  # Real progress, not log-file size — a single large file only logs on
+  # completion, which would otherwise misclassify a legitimately long
+  # transfer as "stalled". Both "bytes" (data transfer) and "checks"
+  # (verifying already-present files) count as progress: on a very large
+  # library, the post-transfer verification pass alone can legitimately run
+  # longer than STALL_MINUTES without moving any new bytes. Confirmed in
+  # production: a real multi-day initial sync finished its data transfer,
+  # then got killed twice in a row (30 min apart) while it was purely
+  # verifying ~280k already-copied files - a false positive from watching
+  # bytes alone.
+  STATS_JSON=$(curl -s -m 5 -X POST -d '{}' "http://$RC_ADDR/core/stats" 2>/dev/null)
+  CURRENT_BYTES=$(echo "$STATS_JSON" | grep -o '"bytes": *[0-9]*' | head -1 | grep -o '[0-9]*' || true)
+  CURRENT_CHECKS=$(echo "$STATS_JSON" | grep -o '"checks": *[0-9]*' | head -1 | grep -o '[0-9]*' || true)
   CURRENT_BYTES=${CURRENT_BYTES:-$LAST_BYTES}
-  if [ "$CURRENT_BYTES" = "$LAST_BYTES" ]; then
+  CURRENT_CHECKS=${CURRENT_CHECKS:-$LAST_CHECKS}
+  if [ "$CURRENT_BYTES" = "$LAST_BYTES" ] && [ "$CURRENT_CHECKS" = "$LAST_CHECKS" ]; then
     STALLED_FOR=$(( STALLED_FOR + STALL_CHECK_INTERVAL ))
   else
     STALLED_FOR=0
   fi
   LAST_BYTES="$CURRENT_BYTES"
+  LAST_CHECKS="$CURRENT_CHECKS"
   if [ "$STALLED_FOR" -ge "$STALL_SECONDS" ]; then
-    log "WARNING: rclone has shown no byte progress for ${STALL_MINUTES} minutes - killing PID $RCLONE_PID"
+    log "WARNING: rclone has shown neither byte nor check progress for ${STALL_MINUTES} minutes - killing PID $RCLONE_PID"
     kill -9 "$RCLONE_PID" 2>/dev/null || true
     WAS_KILLED_FOR_STALL=1
     break
