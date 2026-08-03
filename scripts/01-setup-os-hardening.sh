@@ -27,12 +27,18 @@ Unattended-Upgrade::Allowed-Origins {
 Unattended-Upgrade::Remove-Unused-Dependencies "false";
 Unattended-Upgrade::Remove-Unused-Kernel-Packages "false";
 
-// Only reboot when actually required (kernel update), at a fixed time AFTER
-// the daily backup sync window (03:00, see systemd/drive-backup.timer) so a
-// reboot never kills a sync mid-run.
+// Only reboot when actually required (kernel update), at a fixed time far
+// enough away from the daily backup sync window (03:00 + up to 15min random
+// offset, see systemd/drive-backup.timer) that a reboot never kills a sync
+// mid-run. An earlier version of this used "04:00" (just one hour of
+// margin) on the assumption that daily delta syncs are quick — that broke
+// in practice: a run with one large newly-added file took nearly an hour
+// and was still 94% done when the 04:00 reboot killed it outright. Pick a
+// time with a wide margin instead of a tight one tied to typical-case
+// duration.
 Unattended-Upgrade::Automatic-Reboot "true";
 Unattended-Upgrade::Automatic-Reboot-WithUsers "true";
-Unattended-Upgrade::Automatic-Reboot-Time "04:00";
+Unattended-Upgrade::Automatic-Reboot-Time "13:00";
 EOF
 
 cat > /etc/apt/apt.conf.d/20auto-upgrades <<'EOF'
