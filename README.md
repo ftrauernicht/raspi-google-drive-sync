@@ -71,6 +71,30 @@ See [`docs/architecture.md`](docs/architecture.md) for the full reasoning
 behind every one of these, including the separate-notification-account
 rationale and the SD-card-wear-reduction notes.
 
+## What breaks, and what happens
+
+Every row here is a failure that produces no error of its own. That is the
+whole reason the project exists in this shape: a backup that stops working
+quietly is worse than no backup, because you only find out on the day you
+need it.
+
+| What goes wrong | How it is noticed | What happens |
+|---|---|---|
+| The backup pool is not mounted | Checked before anything else runs | One automatic reboot, which reliably fixes the known stale-mount case. Only if that did not help does a mail ask for a person. A six-hour cooldown stops a reboot loop on real hardware faults. |
+| One of the two drives is missing | Same check | Same path as above |
+| rclone stops making progress mid-write | rclone's live transfer stats are polled every 60 s. Not the log file, which keeps growing while the write side is dead, and not rclone's own `--timeout`, which covers the network side only | After 30 minutes without a byte and without a check, the process is killed and a mail goes out with the next steps |
+| rclone exits with an error | Exit status | Mail with what to do about it |
+| The Google Photos export has gone stale | Newest Takeout group older than 75 days | Reported, because a silently stopped export looks exactly like a finished one |
+| Old Takeout exports pile up | More than two groups present | Everything but the newest two is pruned |
+| The Pi itself dies | Nothing pings healthchecks.io at the end of a run | The external service raises the alarm. A `/start` signal at the beginning keeps a legitimately multi-day first sync from tripping it |
+| The notification mail cannot be sent | msmtp exits non-zero | Logged, and the run still fails. Since a failed run never pings the dead-man switch, the silence itself becomes the alarm |
+
+The deterministic parts of that are covered by [`tests/`](tests/): the stall
+accounting, the reboot cooldown arithmetic, and the Takeout grouping. The
+reasoning behind each decision, including the two real bugs found while
+building the stall watchdog, is in
+[`docs/architecture.md`](docs/architecture.md).
+
 ## Setup
 
 See [`docs/setup-guide.md`](docs/setup-guide.md) for the full step-by-step
