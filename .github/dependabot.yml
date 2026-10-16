@@ -1,0 +1,19 @@
+# Dependabot opens the pull requests; .github/workflows/dependabot-auto-merge.yml closes
+# the ones that carry no decision. Patch and minor updates travel as one grouped pull
+# request, and the group name lands in the branch, which is what that workflow looks
+# for. A major belongs to no group, arrives on its own and stays open.
+#
+# Without this file the actions drift silently: a pinned major keeps working for years
+# while the Node runtime under it is deprecated, and the only sign is a warning on a
+# run that passes.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: ci
+    groups:
+      safe:
+        update-types: ["minor", "patch"]
