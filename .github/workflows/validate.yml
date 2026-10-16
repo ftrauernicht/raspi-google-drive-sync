@@ -6,6 +6,12 @@ on:
   push:
     branches: [main]
 
+# Least privilege: this job only reads the repository. The repository default is
+# write so the auto-merge job can merge; pinning it here keeps this workflow at
+# what it actually needs.
+permissions:
+  contents: read
+
 jobs:
   validate:
     name: Validate
