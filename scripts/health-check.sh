@@ -63,6 +63,14 @@ worst() {  # worst <a> <b> -> the more severe state; UNKNOWN (3) only wins over 
 
 # --- pure logic, covered by tests/test_health_check.sh ---------------------
 
+join_parts() {  # join_parts <a> <b> ... -> "a, b, ..."
+	local out="" part
+	for part in "$@"; do
+		out="${out:+$out, }$part"
+	done
+	echo "$out"
+}
+
 threshold_state() {  # threshold_state <value> <warn> <crit>: higher is worse
 	local value="$1" warn="$2" crit="$3"
 	if [ "$value" -ge "$crit" ]; then echo 2
@@ -123,7 +131,7 @@ check_storage() {
 		perf+=("'$mnt'=${use}%;$DISK_WARN;$DISK_CRIT;0;100")
 		code=$(worst "$code" "$(threshold_state "$use" "$DISK_WARN" "$DISK_CRIT")")
 	done
-	finish "$code" "$(IFS=,; echo "${parts[*]}" | sed 's/,/, /g')" "${perf[*]}"
+	finish "$code" "$(join_parts "${parts[@]}")" "${perf[*]}"
 }
 
 check_sync() {
@@ -204,7 +212,7 @@ check_updates() {
 		parts+=("reboot required for ${reboot_age} h")
 		[ "$reboot_age" -ge "$REBOOT_MAX_HOURS" ] && code=$(worst "$code" 1)
 	fi
-	finish "$code" "$(IFS=,; echo "${parts[*]}" | sed 's/,/, /g')" "pending=$pending"
+	finish "$code" "$(join_parts "${parts[@]}")" "pending=$pending"
 }
 
 main() {

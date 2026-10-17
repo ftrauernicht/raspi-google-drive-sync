@@ -43,6 +43,10 @@ printf 'Package: bash\nStatus: install ok installed\n\nPackage: x\nStatus: deins
 assert_eq "$(broken_packages /tmp/dpkg-status-clean.$$)" "" "installed and removed-with-config packages are fine"
 rm -f /tmp/dpkg-status-clean.$$
 
+# --- join_parts
+assert_eq "$(join_parts "a" "b c" "d")" "a, b c, d" "parts are joined with a comma and a space"
+assert_eq "$(join_parts "only")" "only" "a single part stays as it is"
+
 # --- hours_between
 NOW=1785100000
 assert_eq "$(hours_between $(( NOW - 30*3600 )) "$NOW")" "30" "30 hours apart"
