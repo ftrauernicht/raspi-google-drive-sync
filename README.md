@@ -88,9 +88,11 @@ need it.
 | Old Takeout exports pile up | More than two groups present | Everything but the newest two is pruned |
 | The Pi itself dies | Nothing pings healthchecks.io at the end of a run | The external service raises the alarm. A `/start` signal at the beginning keeps a legitimately multi-day first sync from tripping it |
 | The notification mail cannot be sent | msmtp exits non-zero | Logged, and the run still fails. Since a failed run never pings the dead-man switch, the silence itself becomes the alarm |
+| An interrupted `dpkg` run stops all OS updates | Nothing — apt's daily script exits 0 and systemd calls it a success | Only the optional health checks see it ([`docs/monitoring.md`](docs/monitoring.md)), together with a filling pool, under-voltage and overheating between runs |
 
 The deterministic parts of that are covered by [`tests/`](tests/): the stall
-accounting, the reboot cooldown arithmetic, and the Takeout grouping. The
+accounting, the reboot cooldown arithmetic, the Takeout grouping, and the
+health-check decisions. The
 reasoning behind each decision, including the two real bugs found while
 building the stall watchdog, is in
 [`docs/architecture.md`](docs/architecture.md).

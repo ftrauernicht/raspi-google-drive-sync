@@ -166,6 +166,14 @@ This runs independent of your SSH session either way (it's a systemd
 service, not a foreground shell job), so there's no need for `screen`/`tmux`
 to survive a disconnect.
 
+## Optional — external monitoring
+
+If another machine on your LAN runs Icinga, Nagios or similar, install
+`scripts/health-check.sh` and a forced-command SSH user as described in
+[monitoring.md](monitoring.md). It adds what the backup cannot see about
+itself between runs: pool fill level, under-voltage, temperature, failed
+units, and whether OS updates are still being installed at all.
+
 ## Verification checklist
 
 Before considering this "done", it's worth actually exercising these, not

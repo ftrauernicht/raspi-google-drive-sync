@@ -1,0 +1,15 @@
+Package: bash
+Status: install ok installed
+Version: 5.2.37-2
+
+Package: example-sys-mods
+Status: install ok half-configured
+Version: 1:20260907
+
+Package: initramfs-tools
+Status: install ok triggers-pending
+Version: 0.148
+
+Package: old-package
+Status: deinstall ok config-files
+Version: 1.0
