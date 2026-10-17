@@ -127,11 +127,21 @@ security+feature stream under a single `stable` suite. Because of that:
   never prunes something this project manually installed (mergerfs, rclone
   dependencies) as "unused".
 - Automatic reboots (when a kernel update needs one) are scheduled for
-  04:00 — deliberately *after* the 03:00 daily sync window, so a reboot
-  never kills a sync mid-run.
+  13:00 — far away from the 03:00 daily sync window. The first version
+  used 04:00, and a large sync that was still running at 04:00 was killed
+  by the reboot (see the comment in `scripts/01-setup-os-hardening.sh`).
 - A codename jump (e.g. to whatever Debian release eventually replaces the
   one you're on) never happens automatically — `apt`/`unattended-upgrades`
   never changes the configured suite/codename on their own.
+
+### The trap: an interrupted dpkg run silently ends all updates
+
+If a `dpkg` run is ever interrupted, `apt-get check` fails from then on,
+and `/usr/lib/apt/apt.systemd.daily` answers that by exiting with status 0
+without doing anything. The apt timers keep firing and systemd records
+every run as a success. On a real device of this project that went
+unnoticed for 39 days. The optional health checks catch it — see
+[monitoring.md](monitoring.md).
 
 ## The stall watchdog, and the two real bugs found while building it
 

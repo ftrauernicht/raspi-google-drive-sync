@@ -52,12 +52,16 @@ own infrastructure.
 - `scripts/drive-backup.sh` — the daily sync script (mount check, stall
   watchdog, auto-reboot, space/photo-freshness checks, dead-man-switch
   ping).
+- `scripts/health-check.sh` — optional, read-only Nagios-format checks
+  (storage, sync age, throttling, temperature, units, updates) for an
+  external monitoring system; see `docs/monitoring.md`.
 - `systemd/drive-backup.service` / `.timer` — the daily schedule.
 - `config.env.example` — every value a user needs to customize.
 - `docs/architecture.md` — the "why" behind every non-obvious decision,
   including the real bugs found while testing.
 - `docs/setup-guide.md` — step-by-step adoption guide + verification
   checklist.
+- `docs/monitoring.md` — optional external monitoring via `health-check.sh`.
 - `tests/` — unit tests for the deterministic pure-logic pieces (Takeout
   grouping, stall detection, reboot cooldown math) that don't require real
   hardware to exercise.
