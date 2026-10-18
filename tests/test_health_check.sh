@@ -44,10 +44,12 @@ assert_eq "$(broken_packages /tmp/dpkg-status-clean.$$)" "" "installed and remov
 rm -f /tmp/dpkg-status-clean.$$
 
 # --- last_success_from_log: must survive a reboot-wiped journal, and must
-# not be fooled by rclone's control characters in the same file
-assert_eq "$(last_success_from_log fixtures/drive-backup.log '=== Sync run finished successfully ===')" \
+# not be fooled by rclone's control characters in the same file.
+# The fixture is named .txt on purpose: .gitignore excludes *.log so that a
+# real backup log can never be committed by accident.
+assert_eq "$(last_success_from_log fixtures/drive-backup-log.txt '=== Sync run finished successfully ===')" \
 	"2026-01-03 06:32:29" "the LAST successful run is picked, not the first"
-assert_eq "$(last_success_from_log fixtures/drive-backup.log 'no such marker' || echo leer)" "leer" \
+assert_eq "$(last_success_from_log fixtures/drive-backup-log.txt 'no such marker' || echo leer)" "leer" \
 	"an unknown marker reports failure instead of a wrong time"
 assert_eq "$(last_success_from_log /nonexistent/file '=== Sync run finished successfully ===' || echo leer)" "leer" \
 	"a missing log reports failure, so the journal fallback can run"
