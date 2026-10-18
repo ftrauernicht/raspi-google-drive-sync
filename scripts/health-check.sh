@@ -31,6 +31,11 @@ SYNC_UNIT=${SYNC_UNIT:-drive-backup.service}
 # The line drive-backup.sh logs at the very end of a successful run. If you
 # translated the script's messages, set your own wording here.
 SYNC_SUCCESS_MARKER=${SYNC_SUCCESS_MARKER:-"=== Sync run finished successfully ==="}
+# drive-backup.sh keeps its own log on the storage pool. That file is the
+# primary source here, because the journal does not survive a reboot on a Pi
+# set up the way scripts/01-setup-os-hardening.sh sets it up: reducing SD-card
+# wear means Storage=volatile, so journalctl starts empty after every boot.
+SYNC_LOG=${SYNC_LOG:-$POOL/logs/drive-backup.log}
 SYNC_WARN_HOURS=${SYNC_WARN_HOURS:-30}
 SYNC_CRIT_HOURS=${SYNC_CRIT_HOURS:-54}
 # The Pi's SoC starts soft-throttling at 80 degrees and hard-throttles at 85.
@@ -112,6 +117,23 @@ broken_packages() {  # broken_packages <dpkg status file> -> names, space separa
 	' "$1"
 }
 
+# Timestamp of the last successful run, read from drive-backup.sh's own log.
+# Lines look like "2026-01-02 03:04:05 === Sync run finished successfully ===".
+# -a because the log also carries rclone's progress output, which contains
+# control characters - without it grep calls the file binary and prints nothing.
+last_success_from_log() {  # last_success_from_log <logfile> <marker> -> "YYYY-MM-DD HH:MM:SS"
+	local datei="$1" marker="$2" zeile stempel
+	[ -r "$datei" ] || return 1
+	zeile=$(grep -a -F -- "$marker" "$datei" | tail -1)
+	[ -n "$zeile" ] || return 1
+	stempel=${zeile:0:19}
+	case "$stempel" in
+		[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]\ [0-9][0-9]:[0-9][0-9]:[0-9][0-9]) ;;
+		*) return 1 ;;
+	esac
+	echo "$stempel"
+}
+
 hours_between() {  # hours_between <then_epoch> <now_epoch>
 	echo $(( ($2 - $1) / 3600 ))
 }
@@ -135,17 +157,25 @@ check_storage() {
 }
 
 check_sync() {
-	local line epoch now hours
-	line=$(journalctl -u "$SYNC_UNIT" --since "-14 days" --no-pager -o short-unix 2>/dev/null \
-		| grep -F -- "$SYNC_SUCCESS_MARKER" | tail -1)
-	if [ -z "$line" ]; then
-		finish 2 "no successful run of $SYNC_UNIT in the last 14 days (or journal not readable)"
+	local stempel line epoch now hours quelle
+	# The log on the pool survives reboots; the journal does not (volatile).
+	if stempel=$(last_success_from_log "$SYNC_LOG" "$SYNC_SUCCESS_MARKER"); then
+		epoch=$(date -d "$stempel" +%s 2>/dev/null) || epoch=""
+		quelle="log"
 	fi
-	epoch=${line%%.*}
+	if [ -z "${epoch:-}" ]; then
+		line=$(journalctl -u "$SYNC_UNIT" --since "-14 days" --no-pager -o short-unix 2>/dev/null \
+			| grep -F -- "$SYNC_SUCCESS_MARKER" | tail -1)
+		epoch=${line%%.*}
+		quelle="journal"
+	fi
+	if [ -z "${epoch:-}" ]; then
+		finish 2 "no successful run found in $SYNC_LOG, and none in the journal for the last 14 days"
+	fi
 	now=$(date +%s)
 	hours=$(hours_between "$epoch" "$now")
 	finish "$(threshold_state "$hours" "$SYNC_WARN_HOURS" "$SYNC_CRIT_HOURS")" \
-		"last successful run $hours h ago ($(date -d "@$epoch" '+%F %H:%M'))" \
+		"last successful run $hours h ago ($(date -d "@$epoch" '+%F %H:%M'), from $quelle)" \
 		"age=${hours}h;$SYNC_WARN_HOURS;$SYNC_CRIT_HOURS;0"
 }
 

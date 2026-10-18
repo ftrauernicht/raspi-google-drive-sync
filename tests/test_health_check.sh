@@ -43,6 +43,15 @@ printf 'Package: bash\nStatus: install ok installed\n\nPackage: x\nStatus: deins
 assert_eq "$(broken_packages /tmp/dpkg-status-clean.$$)" "" "installed and removed-with-config packages are fine"
 rm -f /tmp/dpkg-status-clean.$$
 
+# --- last_success_from_log: must survive a reboot-wiped journal, and must
+# not be fooled by rclone's control characters in the same file
+assert_eq "$(last_success_from_log fixtures/drive-backup.log '=== Sync run finished successfully ===')" \
+	"2026-01-03 06:32:29" "the LAST successful run is picked, not the first"
+assert_eq "$(last_success_from_log fixtures/drive-backup.log 'no such marker' || echo leer)" "leer" \
+	"an unknown marker reports failure instead of a wrong time"
+assert_eq "$(last_success_from_log /nonexistent/file '=== Sync run finished successfully ===' || echo leer)" "leer" \
+	"a missing log reports failure, so the journal fallback can run"
+
 # --- join_parts
 assert_eq "$(join_parts "a" "b c" "d")" "a, b c, d" "parts are joined with a comma and a space"
 assert_eq "$(join_parts "only")" "only" "a single part stays as it is"

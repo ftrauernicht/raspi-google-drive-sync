@@ -15,14 +15,42 @@ repairs, restarts or writes anything.
 | Check | WARNING | CRITICAL |
 |---|---|---|
 | `storage` | pool or a member disk ≥ 85 % full | ≥ 95 % full, or not mounted |
-| `sync` | last successful run ≥ 30 h ago | ≥ 54 h ago, or none in 14 days |
+| `sync` | last successful run ≥ 30 h ago | ≥ 54 h ago, or none found at all |
 | `throttle` | under-voltage / capping / throttling **since boot** | the same **right now** |
 | `temperature` | SoC ≥ 70 °C | ≥ 80 °C |
 | `units` | — | any failed systemd unit |
 | `updates` | a required reboot held back ≥ 48 h | unattended-upgrades not run in 48 h, or **an interrupted dpkg run** |
 
 Every threshold is a variable at the top of the script and can be overridden
-in `/etc/drive-backup/health.env`.
+in `/etc/drive-backup/health.env`. The most likely ones to need changing:
+
+| Variable | Default | When to change it |
+|---|---|---|
+| `SYNC_SUCCESS_MARKER` | `=== Sync run finished successfully ===` | you translated the log messages |
+| `SYNC_LOG` | `$POOL/logs/drive-backup.log` | your log lives elsewhere |
+| `POOL`, `MEMBER_DISKS` | `/mnt/backup`, `/mnt/disk1 /mnt/disk2` | different mount points |
+
+### Why `sync` reads the log file, not the journal
+
+`scripts/01-setup-os-hardening.sh` reduces SD-card wear, and part of that is
+`Storage=volatile` for systemd-journald: the journal lives in RAM and starts
+empty after every boot. A check that asks `journalctl` for the last successful
+run therefore reports "nothing in 14 days" after an unattended reboot — while
+the backup itself is perfectly healthy.
+
+Observed on a real device: the Pi rebooted at 13:00 for a kernel update, and
+the check went CRITICAL although the sync had finished successfully at 06:32
+the same morning.
+
+`drive-backup.sh` writes its own log to `$POOL/logs/drive-backup.log`, on the
+storage pool rather than the SD card, so that file survives reboots. The check
+reads it first and falls back to the journal only if the log is missing or
+holds no success line. The output names which source it used.
+
+Two details that matter when reading that file: it also carries rclone's
+progress output, which contains control characters, so `grep` needs `-a` or it
+treats the whole file as binary and silently matches nothing. And the
+timestamp is the first 19 characters of the line, in local time.
 
 ### Why `updates` looks at dpkg first
 
