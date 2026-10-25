@@ -66,6 +66,16 @@ the restore side.
 - **A dead-man switch** for the case the Pi itself dies, with a `/start`
   signal so a legitimately multi-day initial sync never triggers a false
   alarm.
+- **It gets itself out of the one trap that ends all updates.** An
+  interrupted `dpkg` run makes apt's daily job exit 0 forever while nothing
+  is installed any more. The device now checks `apt-get check` before every
+  update attempt, repairs it once on its own, and mails either what it did
+  or a request for a person — instead of waiting for an outside monitor to
+  notice, which is how it was found the first two times.
+- **A flight recorder.** One line a minute on the pool — throttle bits,
+  temperature, load, free memory, and which heavy job is running. The
+  journal is in RAM to spare the SD card, which means a reset otherwise
+  erases its own explanation.
 
 See [`docs/architecture.md`](docs/architecture.md) for the full reasoning
 behind every one of these, including the separate-notification-account
@@ -88,7 +98,11 @@ need it.
 | Old Takeout exports pile up | More than two groups present | Everything but the newest two is pruned |
 | The Pi itself dies | Nothing pings healthchecks.io at the end of a run | The external service raises the alarm. A `/start` signal at the beginning keeps a legitimately multi-day first sync from tripping it |
 | The notification mail cannot be sent | msmtp exits non-zero | Logged, and the run still fails. Since a failed run never pings the dead-man switch, the silence itself becomes the alarm |
-| An interrupted `dpkg` run stops all OS updates | Nothing — apt's daily script exits 0 and systemd calls it a success | Only the optional health checks see it ([`docs/monitoring.md`](docs/monitoring.md)), together with a filling pool, under-voltage and overheating between runs |
+| An interrupted `dpkg` run stops all OS updates | Nothing — apt's daily script exits 0 and systemd calls it a success. `apt-get check` is asked directly, before every update attempt | One automatic `dpkg --configure -a`, then a mail saying what was done. If that did not fix it, a mail asks for a person and automatic repair holds off for 24 hours so it is not buried under a daily retry. Not attempted at all while a sync is running, because that combination is what caused it |
+| …and the reason it got interrupted: an update configuring packages while the sync runs starves PID 1 until the hardware watchdog resets the board | Twice on a real device, visible only afterwards in `/var/log/apt/term.log` ending mid-`Setting up` | The update window is kept out of the backup window. The same configure work takes 43 s on an idle board and did not finish inside the watchdog's one minute under load — the full story is in [`docs/architecture.md`](docs/architecture.md) |
+| A reset with no explanation left, because the journal is deliberately in RAM | One line a minute recorded to the pool: throttle bits, temperature, load, free memory, and which heavy job was running | The last line before the gap says whether it was the power supply or starvation — pushed to disk with `sync -d` so it survives a hard reset |
+| Everything the system mails about itself is addressed to `root`, which a real provider rejects | Nothing — one line in `/var/log/msmtp.log`, which nobody reads | `root` and `default` are mapped to the real recipient, so `apt-listchanges`, cron, `logrotate` and `unattended-upgrades` can actually reach someone |
+| Logs grow for the lifetime of the device | — | Capped at 20 MB with four generations, rotated on size, uncompressed on purpose (a gzip spike on one ARMv6 core is itself a risk, see above) |
 
 The deterministic parts of that are covered by [`tests/`](tests/): the stall
 accounting, the reboot cooldown arithmetic, the Takeout grouping, and the

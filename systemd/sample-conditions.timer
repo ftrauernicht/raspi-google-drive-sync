@@ -1,0 +1,16 @@
+[Unit]
+Description=Record operating conditions once a minute
+Documentation=https://github.com/ftrauernicht/raspi-google-drive-sync
+
+[Timer]
+# OnUnitActiveSec rather than OnCalendar=*:0/1 so the samples do not all
+# land on the same second as every other minute-aligned job in the system.
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=5s
+# Nothing to catch up on: a sample is only worth anything at the moment it
+# was taken.
+Persistent=false
+
+[Install]
+WantedBy=timers.target

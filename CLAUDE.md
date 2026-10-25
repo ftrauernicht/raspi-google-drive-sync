@@ -33,10 +33,23 @@ own infrastructure.
   what makes every failure branch safely testable against real hardware
   without triggering a multi-day sync or real mail spam. Don't remove or
   bypass them "for simplicity".
+- Same for `scripts/dpkg-repair.sh` (`APT_CHECK_CMD`,
+  `DPKG_CONFIGURE_CMD`, `COOLDOWN_HOURS`, `STATE_DIR`, `LOG_DIR`,
+  `DPKG_STATUS`, `BACKUP_UNIT`) — they're what lets every branch of an
+  unattended repair be tested without breaking a real package database.
+- **The update window must stay out of the backup window.** An update that
+  configures packages while the sync is running starved PID 1 on real
+  hardware until the watchdog reset the board mid-`dpkg`, twice, which
+  silently ended all further updates. If you touch
+  `systemd/drive-backup.timer`, the drop-in written by
+  `scripts/01-setup-os-hardening.sh`, or the reboot time, keep all three
+  apart and say so in `docs/architecture.md`.
 - Run `shellcheck` on any changed script before opening a PR — the same
   check gates merging in CI.
-- If you change the stall-watchdog, the takeout-grouping regex, or the
-  auto-reboot cooldown logic, add/update the corresponding test under
+- If you change the stall-watchdog, the takeout-grouping regex, the
+  auto-reboot cooldown logic, or the dpkg-repair decisions (broken-package
+  detection, cooldown, when a repair is attempted at all), add/update the
+  corresponding test under
   `tests/` — these are exactly the pieces of pure logic that were
   originally validated by hand against real hardware failures and real
   Google Takeout output; keep them covered by an actual repeatable test
@@ -55,7 +68,16 @@ own infrastructure.
 - `scripts/health-check.sh` — optional, read-only Nagios-format checks
   (storage, sync age, throttling, temperature, units, updates) for an
   external monitoring system; see `docs/monitoring.md`.
+- `scripts/dpkg-repair.sh` — unattended repair of an interrupted dpkg run,
+  wired in as `ExecStartPre` of `apt-daily-upgrade.service`. One attempt,
+  then it mails and asks for a person; never while a sync is running.
+- `scripts/sample-conditions.sh` — one line a minute to the pool (throttle
+  bits, temperature, load, memory, which heavy job is running), because the
+  journal is volatile and a reset would otherwise erase its own
+  explanation.
 - `systemd/drive-backup.service` / `.timer` — the daily schedule.
+- `systemd/sample-conditions.service` / `.timer` — the condition log.
+- `logrotate/drive-backup` — keeps the logs on the pool bounded.
 - `config.env.example` — every value a user needs to customize.
 - `docs/architecture.md` — the "why" behind every non-obvious decision,
   including the real bugs found while testing.
