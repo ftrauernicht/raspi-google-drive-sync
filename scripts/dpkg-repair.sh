@@ -257,7 +257,10 @@ main() {
 	broken_for=$(hours_since "$since_epoch" "$now")
 
 	if backup_running; then
-		log "dpkg is interrupted ($label), but a backup run is in progress - postponed (interrupted for ${broken_for}h)"
+		# The label can begin with "(" of its own, so it goes last rather
+		# than into brackets - "interrupted ((no package named ...))" is
+		# not what anyone wants to read at three in the morning.
+		log "dpkg is interrupted, but a backup run is in progress - postponed after ${broken_for}h: $label"
 		if [ "$broken_for" -ge "$POSTPONE_MAX_HOURS" ] && may_notify "$now"; then
 			send_mail "[dpkg-repair] Interrupted for ${broken_for}h, and a backup keeps running" \
 "The package database has been interrupted for about ${broken_for} hour(s):
@@ -280,7 +283,7 @@ What to do:
 		marker_epoch=$(stat -c %Y "$REPAIR_MARKER" 2>/dev/null || echo 0)
 		if cooldown_active "$marker_epoch" "$now" "$COOLDOWN_HOURS"; then
 			waited=$(hours_since "$marker_epoch" "$now")
-			log "ERROR: still interrupted ($label) ${waited}h after an automatic attempt - no retry before ${COOLDOWN_HOURS}h"
+			log "ERROR: still interrupted ${waited}h after an automatic attempt, no retry before ${COOLDOWN_HOURS}h: $label"
 			if may_notify "$now"; then
 				send_mail "[dpkg-repair] Still interrupted, needs a person" \
 "An automatic repair was already attempted about ${waited} hour(s) ago - attempted, not necessarily achieved - and the package database is interrupted again or still:
@@ -306,7 +309,7 @@ How to fix this by hand:
 	fi
 
 	touch "$REPAIR_MARKER" 2>/dev/null || true
-	log "dpkg is interrupted ($label) - running: $DPKG_CONFIGURE_CMD"
+	log "dpkg is interrupted, running: $DPKG_CONFIGURE_CMD - unfinished: $label"
 
 	local output status=0
 	output=$(DEBIAN_FRONTEND=noninteractive $DPKG_CONFIGURE_CMD 2>&1) || status=$?
