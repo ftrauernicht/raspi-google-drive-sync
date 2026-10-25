@@ -46,6 +46,46 @@ APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Unattended-Upgrade "1";
 EOF
 
+echo "=== Keeping updates out of the backup window ==="
+# This is not a tidiness preference, it is the fix for the worst failure
+# mode this device had. The shipped schedule is 06:00 with up to 60 minutes
+# of random delay; the daily sync starts at 03:00 and takes hours, so the
+# two overlapped every single day. Twice, the overlap hit the configure
+# phase of a package with expensive maintainer scripts (an initramfs
+# rebuild, a directory-to-symlink conversion over a 41 MB firmware tree,
+# plus the man-db trigger) and the board reset mid-dpkg: on this hardware
+# systemd arms the BCM2835 watchdog with RuntimeWatchdogSec=1m, and under
+# that much competition for one ARMv6 core, PID 1 misses its deadline. The
+# result is an interrupted dpkg run, which silently ends all further
+# updates. Measured afterwards: the same configure work took 43 seconds on
+# an idle machine.
+#
+# So: put the update window where nothing else runs. Keep it away from
+# Automatic-Reboot-Time as well, so an update and the reboot it asks for
+# are not the same busy minute.
+mkdir -p /etc/systemd/system/apt-daily-upgrade.timer.d
+cat > /etc/systemd/system/apt-daily-upgrade.timer.d/10-outside-backup-window.conf <<'EOF'
+# The empty OnCalendar= is required: it clears the package default,
+# otherwise the timer fires at both times.
+[Timer]
+OnCalendar=
+OnCalendar=*-*-* 20:00
+RandomizedDelaySec=30m
+EOF
+
+# Second half of the same fix: repair an interrupted dpkg run before each
+# update attempt instead of waiting for a human or an external monitor to
+# notice that updates stopped. "-" prefix: if the script is missing or
+# fails, the update attempt still goes ahead exactly as before.
+mkdir -p /etc/systemd/system/apt-daily-upgrade.service.d
+cat > /etc/systemd/system/apt-daily-upgrade.service.d/10-dpkg-repair.conf <<'EOF'
+[Service]
+ExecStartPre=-/usr/local/bin/dpkg-repair.sh
+EOF
+
+systemctl daemon-reload
+systemctl restart apt-daily-upgrade.timer
+
 echo "=== Reducing SD card writes ==="
 # journald: RAM-only instead of persisted to the SD card, with a size cap.
 sed -i 's/^Storage=.*/Storage=volatile/; t; s/^\[Journal\]/[Journal]\nStorage=volatile/' /etc/systemd/journald.conf
@@ -71,5 +111,9 @@ echo "--- 51unattended-upgrades-local ---"
 grep -v '^//' /etc/apt/apt.conf.d/51unattended-upgrades-local | grep -v '^$'
 echo "--- journald.conf ---"
 grep -v '^#' /etc/systemd/journald.conf | grep -v '^$'
+echo "--- update window actually in effect (not just the file) ---"
+systemctl show -p TimersCalendar -p RandomizedDelayUSec apt-daily-upgrade.timer
+echo "--- dpkg self-repair hooked in ---"
+systemctl show -p ExecStartPre apt-daily-upgrade.service | grep -o 'dpkg-repair.sh' || echo "MISSING - copy scripts/dpkg-repair.sh to /usr/local/bin first"
 echo "--- dry-run test (can take 20+ minutes on a weak single-core ARMv6 board — that's normal) ---"
 unattended-upgrade --dry-run --debug 2>&1 | grep -E "Allowed origins|Checking|pkgs that look|packages that will|Option --dry-run" | head -20

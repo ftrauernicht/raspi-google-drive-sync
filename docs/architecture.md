@@ -130,6 +130,9 @@ security+feature stream under a single `stable` suite. Because of that:
   13:00 — far away from the 03:00 daily sync window. The first version
   used 04:00, and a large sync that was still running at 04:00 was killed
   by the reboot (see the comment in `scripts/01-setup-os-hardening.sh`).
+- The update window itself is moved to 20:00 (+30 min random), away from
+  both the sync and the reboot time. That one is not about tidiness; it is
+  the fix for the failure described next.
 - A codename jump (e.g. to whatever Debian release eventually replaces the
   one you're on) never happens automatically — `apt`/`unattended-upgrades`
   never changes the configured suite/codename on their own.
@@ -142,6 +145,135 @@ without doing anything. The apt timers keep firing and systemd records
 every run as a success. On a real device of this project that went
 unnoticed for 39 days. The optional health checks catch it — see
 [monitoring.md](monitoring.md).
+
+### Why dpkg got interrupted in the first place: the watchdog
+
+The 39-day outage above was repaired by hand, and eight days later the same
+device was interrupted again. Twice in eight days is not bad luck, so the
+second time the logs were read instead of just the symptom being cleared.
+Both incidents have the same signature:
+
+```
+Log started: 2026-09-09  06:19:29        Log started: 2026-10-24  06:15:15
+  Setting up raspberrypi-sys-mods ...      Setting up rpi-eeprom ...
+  [file ends — no "Log ended"]             [file ends — no "Log ended"]
+```
+
+In the second case `uptime -s` puts the next boot at 06:16:46 — about one
+minute after the configure step began. One minute is exactly what Raspberry
+Pi OS gives systemd to pet the hardware watchdog:
+
+```
+RuntimeWatchdogSec=1m
+  from /usr/lib/systemd/system.conf.d/40-rpi-enable-watchdog.conf
+```
+
+So the board was reset mid-`dpkg` by the BCM2835 watchdog, because PID 1
+did not get scheduled for a full minute. A hard reset leaves exactly the
+observed state: a half-configured package, a pending trigger, no log line,
+no mail.
+
+What starved PID 1 was the project's own backup. The daily sync starts at
+03:00 and runs for three to nine hours; the shipped update window is 06:00
+plus up to 60 minutes of random delay, so the two overlapped **every single
+day**. Light maintainer scripts survive that competition — `cifs-utils` in
+36 s, `ca-certificates` in 3 minutes — but the two that didn't were the
+expensive ones: an initramfs rebuild, and a
+`dpkg-maintscript-helper dir_to_symlink` conversion over a 41 MB firmware
+tree plus the `man-db` trigger. For scale: the same configure work, run on
+an idle machine afterwards, finished in **43 seconds**.
+
+Hence two changes, in this order of importance:
+
+1. **Keep the windows apart.** `apt-daily-upgrade.timer` gets a drop-in
+   putting it at 20:00 (+30 min), where neither a sync nor the automatic
+   reboot runs. This addresses the cause; everything below is about
+   surviving it anyway.
+2. **Repair it unattended.** `scripts/dpkg-repair.sh` runs as
+   `ExecStartPre=-` of `apt-daily-upgrade.service`, so every update attempt
+   — including the catch-up run after a boot — first checks `apt-get check`
+   and, if it fails, runs one `dpkg --configure -a` and mails what it did.
+   If that doesn't fix it, it says so and asks for a person, then holds off
+   for 24 hours so that mail isn't buried under a daily retry. If a backup
+   run is in progress it does nothing at all and leaves it to the next
+   attempt — repairing dpkg while the sync runs is how this started.
+
+Deliberately *not* done: disabling the `man-db` trigger via
+`/etc/dpkg/dpkg.cfg.d/01_nodoc`. That was the cheap fix on the table, and
+it treats the symptom — the next expensive maintainer script would reset
+the board just the same.
+
+Still open on that device, and the reason for the condition log below:
+whether the reset came from the watchdog or from a brown-out under load.
+`vcgencmd get_throttled` only reports the state *now*, and a reset clears
+its sticky bits, so after the fact the two are indistinguishable.
+
+### The condition log: a flight recorder, because the journal is volatile
+
+`health-check.sh` answers "is this device healthy right now", which is the
+right question for a monitor and the wrong one after an unexplained reset.
+This project deliberately keeps the journal in RAM to spare the SD card
+(see below), so a reboot erases the kernel's own account of what happened.
+That is what made the incident above take an afternoon of log archaeology
+instead of one lookup.
+
+`scripts/sample-conditions.sh` writes one line a minute to the pool:
+
+```
+2026-10-25 15:30:10 throttled=0x0 temp=43.3 load=1.30 memavail=306M swapfree=393M busy=none
+```
+
+The last line before a gap in that file is the state just before the
+machine went down: `throttled` other than `0x0` points at the power
+supply, while `0x0` at high load and low free memory points at starvation,
+i.e. the watchdog. `busy=` is the deciding column — it distinguishes "idle
+box browned out" from "sync and package configure ran into each other".
+
+Two details that matter more than they look:
+
+- It writes to the **pool**, never the SD card, and runs with `Nice=10` and
+  `IOSchedulingClass=idle`. A recorder that contributes to the load it is
+  supposed to measure is worse than none.
+- It calls `sync -d` on its own log file afterwards. Without that, the last
+  few lines before a hard reset — the only ones that matter — can still be
+  sitting in the page cache. `sync -d <file>`, not a bare `sync`, so the SD
+  card isn't flushed along with it.
+
+One line a minute is roughly 55 MB a year, which is why there is now also a
+`logrotate` config.
+
+### Nothing may grow without bound
+
+`logrotate/drive-backup` caps every log on the pool at 20 MB with four
+generations. Three details are deliberate:
+
+- **`copytruncate`**, not `create`: rclone holds its `--log-file` open for
+  the whole run, which can be days on the first sync. A plain rename would
+  leave it writing into the rotated inode while the live log stays empty.
+- **`nocompress`**: gzipping a 20 MB file on a single-core ARMv6 board is a
+  minutes-long CPU spike, and a CPU spike competing with a backup run is
+  precisely the failure described above. On a pool with terabytes free,
+  space is the cheap resource and CPU is not.
+- **Size, not time**: a weekly rotation would cut the sync log into pieces
+  that each cover part of a run, which is what makes a long incident hard
+  to read afterwards.
+
+### Mail addressed to `root` has to go somewhere real
+
+Everything on a Debian box that reports by mail the Unix way —
+`apt-listchanges`, cron, `logrotate`, `unattended-upgrades` — addresses
+`root`, and a real SMTP provider rejects that outright:
+
+```
+553-5.1.3 The recipient address <root> is not a valid RFC 5321 address
+```
+
+On the device this was written for, that had been happening unnoticed: the
+only trace is a single line in `/var/log/msmtp.log`. So `msmtprc` gets an
+`aliases /etc/aliases` line and `/etc/aliases` maps both `root` and
+`default` to the real recipient. The backup script's own mails never went
+through that path — it addresses recipients directly — which is exactly why
+nobody noticed the other channel was dead.
 
 ## The stall watchdog, and the two real bugs found while building it
 

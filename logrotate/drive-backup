@@ -1,0 +1,33 @@
+# Keep the logs on the backup pool bounded. Install as
+# /etc/logrotate.d/drive-backup — Debian's logrotate.timer runs daily and
+# picks it up from there.
+#
+# Without this, drive-backup.sh's log grows for the lifetime of the device:
+# rclone logs at INFO level into it, which was about 13 MB per month on the
+# device this was written for, in a single file that nothing ever touched
+# again. Not a space problem on a multi-terabyte pool, but a file nobody can
+# open any more is a diagnostic tool lost, and "runs for years unattended"
+# means nothing may grow without bound.
+/mnt/backup/logs/*.log {
+	# Rotate on size only, checked once a day. A weekly rotation would
+	# chop the sync log into pieces that each cover part of a run, which
+	# is exactly what makes a long incident hard to read afterwards.
+	size 20M
+	rotate 4
+	missingok
+	notifempty
+
+	# copytruncate, not create: rclone holds its --log-file open for the
+	# whole run, which can be days on the first sync. A plain rename would
+	# leave it writing into the rotated inode while the live log stays
+	# empty.
+	copytruncate
+
+	# No compression on purpose. On a single-core ARMv6 board, gzipping a
+	# 20 MB file is a minutes-long CPU spike for a few hundred megabytes of
+	# space on a pool with terabytes free - and a CPU spike competing with
+	# a backup run is the documented cause of this device's worst failure
+	# mode (see docs/architecture.md). Space is the cheap resource here,
+	# CPU is not.
+	nocompress
+}

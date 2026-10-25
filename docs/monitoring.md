@@ -61,10 +61,21 @@ that by **exiting with status 0 without doing anything**. The timers keep
 firing, systemd records every run as successful, and the device stops
 receiving security updates without a single error anywhere.
 
-This was found on a real device of this project after 39 days. The check
-reads `/var/lib/dpkg/status` directly, because `apt-get check` and
-`dpkg --audit` only see the problem when run as root. The fix is one command
-as root: `dpkg --configure -a`.
+This was found on a real device of this project after 39 days, and again
+eight days after that repair. The check reads `/var/lib/dpkg/status`
+directly, because `apt-get check` and `dpkg --audit` only see the problem
+when run as root. The fix is one command as root: `dpkg --configure -a`.
+
+Since then the device repairs this itself — `scripts/dpkg-repair.sh` runs
+before every update attempt and mails what it did
+([`architecture.md`](architecture.md) has the root cause, which turned out
+to be the update window overlapping the backup window until the hardware
+watchdog reset the board mid-`dpkg`). This check stays, for two reasons.
+It is the outside view: if the self-repair itself stops working, or the
+device cannot send mail at all, the monitor is what still says so. And it
+covers the second half of the same question — not just "is dpkg healthy"
+but "did `unattended-upgrades` actually run in the last 48 hours", which a
+repair script cannot answer about itself.
 
 ## Setup: a forced-command SSH user
 

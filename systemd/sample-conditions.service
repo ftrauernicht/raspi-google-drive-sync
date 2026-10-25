@@ -1,0 +1,13 @@
+[Unit]
+Description=Record operating conditions (throttling, load, memory) to the backup pool
+Documentation=https://github.com/ftrauernicht/raspi-google-drive-sync
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/sample-conditions.sh
+# This runs every minute for the lifetime of the device and must never be
+# the reason something else was late. Lowest practical priority for both
+# CPU and disk - the one thing it has to get right is writing its line, not
+# writing it promptly.
+Nice=10
+IOSchedulingClass=idle

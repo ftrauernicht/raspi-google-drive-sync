@@ -51,14 +51,29 @@ gitignored, so your real values never get committed.
 
 ## Step 2 — OS hardening for long-term unattended operation
 
-Run [`scripts/01-setup-os-hardening.sh`](../scripts/01-setup-os-hardening.sh)
-as root. This sets up safe unattended upgrades and reduces SD card write
+1. Copy [`scripts/dpkg-repair.sh`](../scripts/dpkg-repair.sh) to
+   `/usr/local/bin/dpkg-repair.sh` and `chmod +x` it. Step 2's script wires
+   it in as a pre-step of every update attempt, so it should be in place
+   first. (If it isn't, nothing breaks — the hook is prefixed with `-` and
+   simply does nothing — but you lose the self-repair.)
+2. Run
+   [`scripts/01-setup-os-hardening.sh`](../scripts/01-setup-os-hardening.sh)
+   as root.
+
+This sets up safe unattended upgrades, moves the update window out of the
+backup window, hooks in the dpkg self-repair, and reduces SD card write
 load. Read the script's comments and
 [`docs/architecture.md`](architecture.md) — in particular, verify your
 distro's actual package origins with `apt-cache policy` before trusting the
 `Allowed-Origins` values baked into the script; they matched a specific
 Raspberry Pi OS build at the time this was written and could differ for
 you.
+
+**If you change the backup schedule, change the update window with it.** An
+update that configures packages while the sync is running is what reset one
+real device mid-`dpkg`, twice, which silently stopped all further updates
+(the full story is in [`architecture.md`](architecture.md)). The two
+windows have to stay apart, and the sync is the one that can run for hours.
 
 ## Step 3 — Storage pool
 
@@ -120,16 +135,32 @@ and the notes in `config.env.example` and
 Google account, not the one being backed up, and consider that account's
 Inactive Account Manager settings).
 
+The script sends **two** test mails, and the second one is the point: it is
+addressed to `root`, the way the rest of the system addresses its own mail.
+Without the `/etc/aliases` mapping the script installs, a real provider
+rejects that with `553 ... <root> is not a valid RFC 5321 address`, and
+everything reporting the Unix way — `apt-listchanges`, cron, `logrotate`,
+`unattended-upgrades` — is quietly lost. Confirm both arrived, and check
+`/var/log/msmtp.log` for two `exitcode=EX_OK` lines.
+
 ## Step 7 — The sync script and its schedule
 
 1. Copy [`scripts/drive-backup.sh`](../scripts/drive-backup.sh) to
-   `/usr/local/bin/drive-backup.sh` on the Pi, `chmod +x` it.
+   `/usr/local/bin/drive-backup.sh` on the Pi, `chmod +x` it. Same for
+   [`scripts/sample-conditions.sh`](../scripts/sample-conditions.sh), the
+   one-line-a-minute condition log that explains the next unexplained
+   reset (see [`architecture.md`](architecture.md)).
 2. Install the [`systemd/`](../systemd/) unit files, then:
    ```
    systemctl daemon-reload
    systemctl enable --now drive-backup.timer
+   systemctl enable --now sample-conditions.timer
    ```
-3. Before trusting this in production, exercise the test hooks documented
+3. Install [`logrotate/drive-backup`](../logrotate/drive-backup) as
+   `/etc/logrotate.d/drive-backup`, so the logs on the pool stay bounded.
+   Debian's daily `logrotate.timer` picks it up from there; check it with
+   `logrotate --debug /etc/logrotate.d/drive-backup`.
+4. Before trusting this in production, exercise the test hooks documented
    at the top of `drive-backup.sh` (`WARN_85`, `WARN_95`,
    `EXTRA_RCLONE_FLAGS`, `STALL_MINUTES`, `STALL_CHECK_INTERVAL`,
    `REBOOT_CMD`, `AUTO_REBOOT_ENABLED`) to safely exercise every branch —
@@ -193,6 +224,20 @@ just assuming they work:
 - [ ] The dead-man switch actually alerts if pings stop (temporarily shorten
       the healthchecks.io period/grace to confirm, then reset).
 - [ ] A hard power cut recovers on its own after power returns.
+- [ ] A mail addressed to `root` arrives (`printf 'Subject: t\n\nt\n' |
+      msmtp root`). If it doesn't, every report the system writes about
+      itself is being thrown away.
+- [ ] The dpkg self-repair works end to end: `touch
+      /etc/drive-backup/state/.dpkg-repair-attempted` is *not* the test —
+      instead run `dpkg-repair.sh` with its hooks
+      (`APT_CHECK_CMD=false DPKG_CONFIGURE_CMD=true /usr/local/bin/dpkg-repair.sh`)
+      and confirm a mail arrives and `dpkg-repair.log` names what it tried.
+- [ ] The update window and the backup window really are apart:
+      `systemctl show -p TimersCalendar apt-daily-upgrade.timer` against
+      `systemctl list-timers drive-backup.timer` and a look at how long
+      your own runs actually take in `drive-backup.log`.
+- [ ] The condition log is filling: `tail /mnt/backup/logs/conditions.log`
+      shows a line a minute, and `busy=rclone` appears during a sync.
 - [ ] Once a year: plug a drive into another PC and actually open a sample
       of files plus one Takeout archive, to confirm the backup is truly
       restorable, not just "present".
