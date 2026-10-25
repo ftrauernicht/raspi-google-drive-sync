@@ -5,9 +5,29 @@ Documentation=https://github.com/ftrauernicht/raspi-google-drive-sync
 [Service]
 Type=oneshot
 ExecStart=/usr/local/bin/sample-conditions.sh
-# This runs every minute for the lifetime of the device and must never be
-# the reason something else was late. Lowest practical priority for both
-# CPU and disk - the one thing it has to get right is writing its line, not
-# writing it promptly.
+
+# Measured, not assumed: at the default log level this unit produced 212
+# journal lines in 55 minutes - a "Starting", a "Deactivated", a "Finished"
+# and a "Consumed ... CPU time" every single minute, about 5800 lines a day.
+# This project keeps the journal in RAM and capped at 20 MB (see
+# docs/architecture.md), so that noise alone evicts everything worth having
+# within hours. LogLevelMax filters both this unit's own output and
+# systemd's messages about it, which is exactly the chatter in question.
+# Anything this script has to say, it says at warning level or in its log.
+LogLevelMax=warning
+
+# A oneshot service has no start timeout by default, and
+# OnUnitActiveSec= will not re-arm while the unit is still running. So a
+# vcgencmd blocked on a wedged firmware mailbox, or an fsync blocked on a
+# wedged USB disk, would stop the recording silently and for good - the one
+# outcome this unit must not have.
+TimeoutStartSec=30
+
+# Lowest practical priority for CPU and disk. Honest about the limits: the
+# I/O class only bites under an I/O scheduler that honours it (BFQ or CFQ),
+# and Pi OS usually runs mq-deadline on USB disks, so treat this as "cannot
+# hurt" rather than a guarantee. A recorder that contributes to the load it
+# is supposed to measure would be worse than none, and the per-minute fsync
+# is the part to watch if that ever shows up.
 Nice=10
 IOSchedulingClass=idle

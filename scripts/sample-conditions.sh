@@ -31,15 +31,27 @@ LOG_FILE=${LOG_FILE:-$LOG_DIR/conditions.log}
 THERMAL_ZONE=${THERMAL_ZONE:-/sys/class/thermal/thermal_zone0/temp}
 
 # Nothing to write to, and nothing worth failing over: the pool being gone
-# is the backup script's problem to report, not this one's.
+# is the backup script's problem to report, not this one's. The gap in the
+# file is the trace.
 mountpoint -q "$POOL" || exit 0
-[ -d "$LOG_DIR" ] || exit 0
+mkdir -p "$LOG_DIR" 2>/dev/null || exit 0
 
-throttled=$(vcgencmd get_throttled 2>/dev/null | cut -d= -f2)
+# vcgencmd prints "throttled=0x0" normally but "error=1 error_msg=..." when
+# the firmware mailbox is unhappy, which would put a space into the value
+# and break the one-line-per-sample format every reader of this file
+# assumes. Keep it a single token.
+throttled=$(vcgencmd get_throttled 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')
 temp=$(awk '{printf "%.1f", $1/1000}' "$THERMAL_ZONE" 2>/dev/null)
 load=$(cut -d' ' -f1 /proc/loadavg)
 memavail=$(awk '/^MemAvailable:/{printf "%dM", $2/1024}' /proc/meminfo)
 swapfree=$(awk '/^SwapFree:/{printf "%dM", $2/1024}' /proc/meminfo)
+# Uptime, because the wall clock cannot be trusted across the event this
+# file exists to explain: there is no RTC on this board, so after a hard
+# reset the clock is whatever fake-hwclock last saved until NTP steps it -
+# which can make the first line after a reset look *older* than the last
+# line before it. Uptime going backwards is clock-independent proof of a
+# restart, and the length of the gap is then readable too.
+up=$(cut -d' ' -f1 /proc/uptime)
 
 # Which heavy job was running matters more than the bare numbers: it is what
 # distinguishes "idle box browned out" from "sync and package configure ran
@@ -49,13 +61,17 @@ pgrep -x rclone >/dev/null 2>&1 && busy="${busy}rclone,"
 pgrep -x dpkg >/dev/null 2>&1 && busy="${busy}dpkg,"
 pgrep -x apt-get >/dev/null 2>&1 && busy="${busy}apt-get,"
 pgrep -x mandb >/dev/null 2>&1 && busy="${busy}mandb,"
+# -f, not -x: the kernel truncates comm to 15 characters, so an
+# update-initramfs run shows up as "update-initramf" and -x would miss the
+# single heaviest job on this device - the one named in both incidents.
+pgrep -f 'update-initramfs|mkinitramfs' >/dev/null 2>&1 && busy="${busy}initramfs,"
 # Not a bare "unattended-upgrade": unattended-upgrades.service permanently
 # runs "unattended-upgrade-shutdown --wait-for-signal", which would mark
 # every single line as an update in progress. Only a real run counts.
 pgrep -f 'unattended-upgrade( |$)' >/dev/null 2>&1 && busy="${busy}u-u,"
 
-printf '%s throttled=%s temp=%s load=%s memavail=%s swapfree=%s busy=%s\n' \
-	"$(date '+%Y-%m-%d %H:%M:%S')" "${throttled:-?}" "${temp:-?}" "$load" \
+printf '%s up=%s throttled=%s temp=%s load=%s memavail=%s swapfree=%s busy=%s\n' \
+	"$(date '+%Y-%m-%d %H:%M:%S')" "${up:-?}" "${throttled:-?}" "${temp:-?}" "$load" \
 	"$memavail" "$swapfree" "${busy:-none}" >>"$LOG_FILE" 2>/dev/null || exit 0
 
 # Push this one file to disk. Without it the last few lines before a hard
