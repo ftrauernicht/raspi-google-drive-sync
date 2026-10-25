@@ -193,10 +193,42 @@ Hence two changes, in this order of importance:
    `ExecStartPre=-` of `apt-daily-upgrade.service`, so every update attempt
    — including the catch-up run after a boot — first checks `apt-get check`
    and, if it fails, runs one `dpkg --configure -a` and mails what it did.
-   If that doesn't fix it, it says so and asks for a person, then holds off
-   for 24 hours so that mail isn't buried under a daily retry. If a backup
-   run is in progress it does nothing at all and leaves it to the next
-   attempt — repairing dpkg while the sync runs is how this started.
+   If that doesn't fix it, it says so and asks for a person. Every mail it
+   can send is capped at one per 24 hours, because the thing being reported
+   is invisible by design and must not be buried under a daily retry
+   either.
+
+Four details of that script are less obvious than they look, and each one
+is there because the straightforward version was wrong:
+
+- **"Is a backup running?" cannot be asked with `systemctl is-active`.**
+  `drive-backup.service` is `Type=oneshot` with `RemainAfterExit=no`, so
+  for the entire duration of a run its state is `activating`, and
+  `is-active --quiet` exits 3 — measured on the device, not assumed. A
+  check written that way sees an idle machine throughout a nine-hour sync
+  and goes ahead with the configure run: exactly the collision that caused
+  all of this. The script asks for `ActiveState` and accepts `activating`,
+  and additionally matches the process name, which also catches a run
+  started by hand with no unit at all.
+- **Postponing cannot be silent forever.** A first sync legitimately runs
+  for days, and a repair postponed every day for a week with only a log
+  line to show for it reproduces the original 39-day outage in slow motion.
+  After `POSTPONE_MAX_HOURS` (48 by default) a mail goes out anyway,
+  explaining that nothing was repaired *because* a backup kept running.
+- **A lock held by another apt is not a broken dpkg.** `apt-get check`
+  itself does not take the dpkg lock (verified by holding
+  `/var/lib/dpkg/lock-frontend` and running it), but `dpkg --configure -a`
+  does. A concurrent `apt-daily` download run would therefore turn into a
+  mail claiming the repair failed, and burn the retry cooldown on a healthy
+  machine. Lock messages are recognised and the run simply retries next
+  time.
+- **"No package named" means two opposite things.** `apt-get check` fails
+  both on an interrupted run and on unmet dependencies, and in the first
+  case the status file may name nothing. The distinguishing evidence is
+  whether `/var/lib/dpkg/updates/` holds records: with them it is the plain
+  case and a configure run does fix it, without them it does not. The mail
+  says which, and quotes `apt-get check`'s own output, because that is the
+  authoritative error and the earlier version threw it away.
 
 Deliberately *not* done: disabling the `man-db` trigger via
 `/etc/dpkg/dpkg.cfg.d/01_nodoc`. That was the cheap fix on the table, and
@@ -220,7 +252,7 @@ instead of one lookup.
 `scripts/sample-conditions.sh` writes one line a minute to the pool:
 
 ```
-2026-10-25 15:30:10 throttled=0x0 temp=43.3 load=1.30 memavail=306M swapfree=393M busy=none
+2026-10-25 15:30:10 up=123456.78 throttled=0x0 temp=43.3 load=1.30 memavail=306M swapfree=393M busy=none
 ```
 
 The last line before a gap in that file is the state just before the
@@ -229,7 +261,15 @@ supply, while `0x0` at high load and low free memory points at starvation,
 i.e. the watchdog. `busy=` is the deciding column — it distinguishes "idle
 box browned out" from "sync and package configure ran into each other".
 
-Two details that matter more than they look:
+`up=` is there because the wall clock cannot be trusted across the very
+event this file exists to explain. There is no RTC on this board, so after
+a hard reset the clock is whatever `fake-hwclock` last saved until NTP
+steps it — which can make the first line *after* a reset look older than
+the last line before it, and "the last line before the gap" then means
+nothing. Uptime going backwards is clock-independent proof of a restart,
+and it also makes the length of the gap readable.
+
+Three details that matter more than they look:
 
 - It writes to the **pool**, never the SD card, and runs with `Nice=10` and
   `IOSchedulingClass=idle`. A recorder that contributes to the load it is
@@ -238,6 +278,17 @@ Two details that matter more than they look:
   few lines before a hard reset — the only ones that matter — can still be
   sitting in the page cache. `sync -d <file>`, not a bare `sync`, so the SD
   card isn't flushed along with it.
+- Its unit sets `LogLevelMax=warning`, which is not tidiness either. At the
+  default level, a per-minute oneshot unit writes a "Starting", a
+  "Deactivated", a "Finished" and a "Consumed … CPU time" line every time:
+  212 journal lines in 55 minutes when it was measured, about 5800 a day.
+  The journal here is in RAM and capped at 20 MB, so that noise alone
+  evicts everything worth having within hours — a recorder that destroys
+  the other evidence is a bad trade. It also sets `TimeoutStartSec=30`,
+  because a oneshot service has no start timeout by default and
+  `OnUnitActiveSec=` does not re-arm while the unit is still running: a
+  `vcgencmd` blocked on a wedged mailbox would otherwise stop the recording
+  silently and for good.
 
 One line a minute is roughly 55 MB a year, which is why there is now also a
 `logrotate` config.
@@ -257,6 +308,15 @@ generations. Three details are deliberate:
 - **Size, not time**: a weekly rotation would cut the sync log into pieces
   that each cover part of a run, which is what makes a long incident hard
   to read afterwards.
+
+Rotation has one consequence worth spelling out, because it would otherwise
+undo the fix in `health-check.sh`: right after a rotation the live log is
+empty, so the last "finished successfully" line exists only in
+`drive-backup.log.1`. The `sync` check therefore reads one rotated
+generation as well, oldest first so the newest match still wins. Without
+that it would fall through to the journal — volatile here — and report "no
+successful run" on a perfectly healthy device, which is the exact false
+alarm that check was rewritten to end.
 
 ### Mail addressed to `root` has to go somewhere real
 

@@ -34,9 +34,14 @@ own infrastructure.
   without triggering a multi-day sync or real mail spam. Don't remove or
   bypass them "for simplicity".
 - Same for `scripts/dpkg-repair.sh` (`APT_CHECK_CMD`,
-  `DPKG_CONFIGURE_CMD`, `COOLDOWN_HOURS`, `STATE_DIR`, `LOG_DIR`,
-  `DPKG_STATUS`, `BACKUP_UNIT`) — they're what lets every branch of an
-  unattended repair be tested without breaking a real package database.
+  `DPKG_CONFIGURE_CMD`, `COOLDOWN_HOURS`, `NOTIFY_COOLDOWN_HOURS`,
+  `POSTPONE_MAX_HOURS`, `CMD_TIMEOUT`, `POOL`, `STATE_DIR`, `LOG_DIR`,
+  `DPKG_STATUS`, `DPKG_UPDATES_DIR`, `BACKUP_UNIT`, `BACKUP_PATTERN`) —
+  they're what lets every branch of an unattended repair be tested without
+  breaking a real package database. `tests/test_dpkg_repair.sh` also stubs
+  `systemctl`, `pgrep`, `mountpoint` and `msmtp` through `PATH`; keep it
+  that way, or the tests start depending on what happens to run on the
+  machine executing them.
 - **The update window must stay out of the backup window.** An update that
   configures packages while the sync is running starved PID 1 on real
   hardware until the watchdog reset the board mid-`dpkg`, twice, which

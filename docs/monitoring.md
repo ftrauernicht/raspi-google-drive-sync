@@ -30,7 +30,7 @@ in `/etc/drive-backup/health.env`. The most likely ones to need changing:
 | `SYNC_LOG` | `$POOL/logs/drive-backup.log` | your log lives elsewhere |
 | `POOL`, `MEMBER_DISKS` | `/mnt/backup`, `/mnt/disk1 /mnt/disk2` | different mount points |
 
-### Why `sync` reads the log file, not the journal
+### Why `sync` reads the log file, and one rotated generation of it
 
 `scripts/01-setup-os-hardening.sh` reduces SD-card wear, and part of that is
 `Storage=volatile` for systemd-journald: the journal lives in RAM and starts
@@ -51,6 +51,15 @@ Two details that matter when reading that file: it also carries rclone's
 progress output, which contains control characters, so `grep` needs `-a` or it
 treats the whole file as binary and silently matches nothing. And the
 timestamp is the first 19 characters of the line, in local time.
+
+A third one that only appears once the log is being rotated: `logrotate`
+truncates the live file in place (`copytruncate`, because rclone holds it
+open for the whole run), so immediately after a rotation the last success
+line exists only in `drive-backup.log.1`. The check therefore reads that
+generation as well, oldest first so the newest match still wins. Otherwise
+the very false alarm described above comes back by a different route — an
+empty live log plus a journal wiped by the last reboot, on a device that is
+perfectly fine.
 
 ### Why `updates` looks at dpkg first
 

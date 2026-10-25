@@ -54,6 +54,29 @@ assert_eq "$(last_success_from_log fixtures/drive-backup-log.txt 'no such marker
 assert_eq "$(last_success_from_log /nonexistent/file '=== Sync run finished successfully ===' || echo leer)" "leer" \
 	"a missing log reports failure, so the journal fallback can run"
 
+# --- the rotated generation has to be read too. logrotate truncates the
+# live log in place (copytruncate, because rclone holds it open for days),
+# so between a rotation and the next finished run the last success line
+# exists only in <log>.1. Missing that means a CRITICAL "no successful run"
+# on a healthy device - the same false alarm this function exists to end.
+MARKER='=== Sync run finished successfully ==='
+ROT=/tmp/rotated-log.$$
+printf '2026-01-02 03:04:05 %s\n' "$MARKER" > "$ROT.1"
+: > "$ROT"
+assert_eq "$(last_success_from_log "$ROT" "$MARKER")" "2026-01-02 03:04:05" \
+	"a freshly truncated live log falls back to the rotated one"
+printf '2026-01-04 05:06:07 %s\n' "$MARKER" > "$ROT"
+assert_eq "$(last_success_from_log "$ROT" "$MARKER")" "2026-01-04 05:06:07" \
+	"with both present the newer entry from the live log wins"
+rm -f "$ROT"
+assert_eq "$(last_success_from_log "$ROT" "$MARKER")" "2026-01-02 03:04:05" \
+	"a missing live log alone is no reason to give up"
+printf 'nothing of interest\n' > "$ROT"
+printf 'nothing here either\n' > "$ROT.1"
+assert_eq "$(last_success_from_log "$ROT" "$MARKER" || echo leer)" "leer" \
+	"no marker in either generation still reports failure"
+rm -f "$ROT" "$ROT.1"
+
 # --- join_parts
 assert_eq "$(join_parts "a" "b c" "d")" "a, b c, d" "parts are joined with a comma and a space"
 assert_eq "$(join_parts "only")" "only" "a single part stays as it is"

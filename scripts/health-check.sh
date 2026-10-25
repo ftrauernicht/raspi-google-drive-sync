@@ -123,8 +123,19 @@ broken_packages() {  # broken_packages <dpkg status file> -> names, space separa
 # control characters - without it grep calls the file binary and prints nothing.
 last_success_from_log() {  # last_success_from_log <logfile> <marker> -> "YYYY-MM-DD HH:MM:SS"
 	local datei="$1" marker="$2" zeile stempel
-	[ -r "$datei" ] || return 1
-	zeile=$(grep -a -F -- "$marker" "$datei" | tail -1)
+	local dateien=()
+	# One rotated generation is read as well, oldest first so that the last
+	# match is still the newest. logrotate truncates the live log in place
+	# (copytruncate, because rclone holds its --log-file open for days), so
+	# in the window between a rotation and the next finished run the last
+	# success line exists only in <log>.1. Without this the check falls
+	# through to the journal, which is volatile here, and then reports "no
+	# successful run" on a device that is perfectly healthy - the same
+	# class of false alarm this function was written to end.
+	[ -r "$datei.1" ] && dateien+=("$datei.1")
+	[ -r "$datei" ] && dateien+=("$datei")
+	[ "${#dateien[@]}" -gt 0 ] || return 1
+	zeile=$(grep -a -h -F -- "$marker" "${dateien[@]}" | tail -1)
 	[ -n "$zeile" ] || return 1
 	stempel=${zeile:0:19}
 	case "$stempel" in

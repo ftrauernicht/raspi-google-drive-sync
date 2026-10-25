@@ -23,6 +23,11 @@ SENDER_EMAIL='<SENDER_GMAIL_ADDRESS>'
 APP_PASSWORD='<APP_PASSWORD_NO_SPACES>'
 RECIPIENT_ADDRESS='<RECIPIENT_ADDRESS>'
 
+# Create the file empty and private *before* writing the app password into
+# it. Writing first and running chmod afterwards leaves a window in which
+# the credential is world-readable.
+install -m 600 -o root -g root /dev/null /etc/msmtprc
+
 cat > /etc/msmtprc <<EOF
 defaults
 auth           on
@@ -45,16 +50,29 @@ host           smtp.gmail.com
 port           587
 from           $SENDER_EMAIL
 user           $SENDER_EMAIL
-password       $APP_PASSWORD
-
-account default : gmail-notify
 EOF
+
+# The password goes in separately, with printf '%s'. Inside the unquoted
+# heredoc above it would be subject to shell expansion, so a '$' or a
+# backslash in it would silently end up as something else - and the symptom
+# would be an authentication failure with no hint why. Google's app
+# passwords happen to be 16 lowercase letters, but a template other people
+# adapt should not depend on that.
+printf 'password       %s\n\naccount default : gmail-notify\n' "$APP_PASSWORD" >> /etc/msmtprc
 
 chown root:root /etc/msmtprc
 chmod 600 /etc/msmtprc
 
 # "default" is msmtp's catch-all, so a mail to any other local name is
 # delivered too instead of being refused by the server.
+#
+# Keep a copy if the file already exists: on a plain appliance there is no
+# /etc/aliases, but if a real MTA was ever installed, silently replacing
+# its alias table would redirect mail nobody asked us to touch.
+if [ -e /etc/aliases ]; then
+	cp -a /etc/aliases "/etc/aliases.before-drive-backup"
+	echo "Note: /etc/aliases existed and was kept as /etc/aliases.before-drive-backup"
+fi
 cat > /etc/aliases <<EOF
 root: $RECIPIENT_ADDRESS
 default: $RECIPIENT_ADDRESS
