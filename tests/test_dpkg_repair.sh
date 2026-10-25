@@ -354,4 +354,14 @@ assert_eq "$(grep -c 'pool unreachable' "$WORK/mail.txt")" "1" \
 rm -f "$WORK/pool-gone"
 mkdir -p "$LOGS"
 
+# 16. Across every line written above: the package label can begin with a
+# "(" of its own, so it must not also be wrapped in brackets. The first
+# version logged "dpkg is interrupted ((no package named ...))", which is
+# not what anyone wants to read at three in the morning.
+touch "$WORK/broken"
+rm -f "$MARKER" "$NOTIFIED" "$SINCE"
+run_repair configure-noop "$WORK/status-clean" >/dev/null
+assert_eq "$(grep -c '((' "$LOGS/dpkg-repair.log")" "0" \
+	"no log line doubles the brackets around the package label"
+
 assert_summary
