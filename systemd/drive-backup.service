@@ -7,22 +7,28 @@ Wants=network-online.target
 Type=oneshot
 ExecStart=/usr/local/bin/drive-backup.sh
 
-# Leave the board answerable while the transfer runs. Measured on
-# 2026-10-28: rclone ran at Nice=0 with 62-84% of the single core and no
-# idle time left at all, and a health check fetched over SSH then cost 8 to
-# 23 seconds instead of one or two. check_by_ssh defaults to a 10 second
-# timeout, so a sync that is simply doing its job raised monitoring alarms
-# for six hours (see docs/monitoring.md).
+# This board has no headroom to share, so say who loses. A transfer that
+# runs for six hours should not compete on equal terms with PID 1, sshd and
+# the condition recorder: that is the lesson of the watchdog incident in
+# docs/architecture.md, where CPU contention during a package configure
+# starved PID 1 until the hardware watchdog reset the board. Niceness costs
+# the sync nothing while nothing else wants the CPU - it only decides who
+# yields when something does.
 #
-# Niceness costs the sync nothing while nothing else wants the CPU - it
-# only decides who yields when something does, and on this device that is
-# sshd, the condition recorder and PID 1. Which is also the lesson of the
-# incident in docs/architecture.md: this board has no headroom to share, so
-# say who loses.
+# What this does NOT fix, measured rather than assumed. On 2026-10-28,
+# while a sync was transferring a multi-gigabyte file at 62-84 % of the
+# single core, a health check fetched over SSH cost 8 to 29 seconds against
+# one to two on an idle board. Alternating the running rclone between nice 0
+# and nice 5 between consecutive checks - interleaved, because measuring one
+# setting after the other let the sync's own phases masquerade as an effect -
+# gave 13.6 s against 12.4 s. So that latency is not CPU scheduling: it is
+# I/O and memory pressure, and no nice value turns a 10 second check timeout
+# into a workable one. The monitoring side has to allow for it instead;
+# docs/monitoring.md says how, docs/architecture.md has the numbers.
 #
 # The I/O priority carries the same honest caveat as the recorder's: it
 # only bites under an I/O scheduler that honours it, and Pi OS usually runs
-# mq-deadline on USB disks.
+# mq-deadline on USB disks, so do not expect it to be the answer either.
 Nice=5
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7

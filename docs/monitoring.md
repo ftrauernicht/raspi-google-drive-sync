@@ -148,12 +148,43 @@ object Service "backup-sync" {
 Use one service per check name. Keep the intervals modest — this is a
 single-core ARMv6 board, and `updates` runs an `apt-get` simulation.
 
-The last three lines are not boilerplate. `check_by_ssh` defaults to a 10
-second timeout, and that is less than this board needs while it is busy:
-measured on a Pi 1 during a sync transferring a multi-gigabyte file, one
-check over SSH took **8 to 23 seconds**, against one to two on an idle
-board. The handshake and the login shell are CPU-bound and there was no
-idle CPU to be had, so every check went UNKNOWN for hours while nothing at
-all was wrong. The device's own half of that fix is in
-`systemd/drive-backup.service`, where the sync now yields the CPU to sshd;
-this half is what keeps a slow poll from becoming a page.
+### Give the SSH check room, because the board has none
+
+The last three lines of that example are not boilerplate. `check_by_ssh`
+defaults to a 10 second timeout, and that is less than this board needs
+while it is busy: measured on a Pi 1 during a sync transferring a
+multi-gigabyte file, one check over SSH took **8 to 29 seconds**, against
+one to two on an idle board. Every check would have gone UNKNOWN while
+nothing at all was wrong.
+
+Nicing the sync does not rescue this, and it was the first thing tried —
+the numbers are in [`architecture.md`](architecture.md). The cost is not
+CPU scheduling, so a generous timeout plus retries is not a workaround for
+a missing device-side fix; for this symptom it is the fix.
+`systemd/drive-backup.service` still runs the sync at `Nice=5`, for the
+different and better reason given there.
+
+### Pick `SYNC_WARN_HOURS` from your own run durations
+
+The `sync` check measures the age of the last *completed* run, because
+that is the only point at which success is known. So the age between two
+healthy runs is not 24 hours, it is 24 hours plus however much longer one
+run took than the one before it. A day with almost nothing to fetch
+followed by a day with a multi-gigabyte file is the worst case, and it is
+a perfectly healthy pair of runs.
+
+On the device this was built for, runs vary between 35 minutes and about 9
+hours, so the honest floor for the warning threshold is roughly
+`24 h + (longest run − shortest run)` ≈ 32 h — and the default of 30 h is
+therefore too tight *for that device*. Look at your own
+`=== Sync run finished successfully ===` lines before trusting the default,
+and raise it in `/etc/drive-backup/health.env`:
+
+```bash
+echo 'SYNC_WARN_HOURS=36' >> /etc/drive-backup/health.env
+```
+
+Leave the critical threshold where it is. The warning is the one that has
+to tolerate a long night; "it has not finished for two days" is a real
+fault either way, and the dead-man switch catches "it never started at
+all" long before either of them.

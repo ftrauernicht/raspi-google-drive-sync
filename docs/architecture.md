@@ -362,13 +362,14 @@ among it, and ran from 03:10 until well past midday. During that window:
   and a failed unit is exactly what `health-check.sh units` reports as a
   fault. The monitor was being told the device was broken while it was
   working.
-- `rclone` ran at `Nice=0` with 62-84 % of the single core and no idle time
-  left at all. A health check fetched over SSH, timed from the monitoring
-  machine's side, cost **8 to 23 seconds** instead of one or two.
-  `check_by_ssh` defaults to a 10 second timeout, so the checks began
-  timing out on their own - hours of alarms about a device doing its job.
+- A health check fetched over SSH, timed from the monitoring machine's
+  side, cost **8 to 29 seconds** against one to two on an idle board, while
+  `rclone` held 62-84 % of the single core and left no idle time at all.
+  `check_by_ssh` defaults to a 10 second timeout, so a board doing nothing
+  worse than its job can fail its own checks.
 
-Both fixes are one idea: a limit has to mean what it says.
+The first of those was a limit that did not mean what it said, and it is
+fixed:
 
 - `TimeoutStartSec=300` on the recorder means "this recorder is wedged",
   which is a real fault and worth failing over. "The pool kept me waiting"
@@ -376,18 +377,43 @@ Both fixes are one idea: a limit has to mean what it says.
   `<4>` warning into the journal (`SLOW_RUN_WARN_SECONDS`, 20 s by
   default) - `<4>` because `LogLevelMax=warning` is the only level that
   unit lets through. The gaps in `conditions.log` now have their
-  explanation sitting next to them instead of a dead unit.
-- `drive-backup.service` runs with `Nice=5` and the lowest best-effort I/O
-  priority. Niceness costs the sync nothing while nothing else wants the
-  CPU - it only decides who yields when something does, and here that is
-  sshd, the recorder and PID 1. Same lesson as the watchdog incident, this
-  time applied before it bit: this board has no headroom to share, so say
-  who loses.
+  explanation sitting next to them instead of a dead unit. Confirmed the
+  same morning, once the change was live: with the transfer still running,
+  samples took **42 to 45 seconds** and said so - `sample took 43s, over
+  the 20s mark - the pool was blocking (busy=rclone,)` - while the unit
+  stopped failing entirely. The per-minute cadence survives, because
+  `OnUnitActiveSec=` counts from the start of the previous run, not its
+  end.
 
-The monitoring side needs the matching change, which is why
-`docs/monitoring.md` now sets an SSH check timeout well above what a loaded
-board needs, with retries, so that one slow poll stays a slow poll instead
-of an alarm.
+The second one the device cannot fix, and that measurement is worth
+recording precisely because the obvious remedy fails.
+
+`drive-backup.service` now runs with `Nice=5` and the lowest best-effort
+I/O priority. That is right on its own terms - a transfer running for hours
+should not compete with PID 1 and sshd on equal footing, which is exactly
+how the watchdog incident above happened - and it was the first thing tried
+for the check latency too. **It does not make a 10 second check timeout
+workable.** Measured by alternating the running `rclone` between nice 0 and
+nice 5 between consecutive checks, 7 samples each: **13.6 s** mean at
+nice 0 (9.4-17.6) against **12.4 s** at nice 5 (8.2-14.8). A second and a
+bit on a check that costs thirteen either way, with the two ranges
+overlapping almost entirely - not nothing, and nowhere near enough.
+
+That alternation is the point, and the first attempt at this measurement is
+worth keeping as a way to be wrong. Measured the straightforward way -
+several checks at nice 0, then several at nice 5, then at nice 15 - it
+looked like a large win: 8-9 s at the higher nice values against three
+samples of 23-29 s at nice 0. Interleaved, the effect vanishes. What those
+outliers actually tracked was the sync's own phases, and anything that
+drifts while you measure one setting after the other signs its name to
+whichever you measured second.
+
+The latency, then, is not CPU scheduling. It is I/O and memory pressure -
+29 MB free, swap in use, the page cache owned by the transfer - and no nice
+value addresses that. On a board of this age the monitoring has to allow
+for it instead, which is why `docs/monitoring.md` sets an SSH check timeout
+well above what a loaded board needs, with retries. That is not the second
+half of a device-side fix; for this symptom it is the whole fix.
 
 ### Nothing may grow without bound
 
