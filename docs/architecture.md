@@ -288,10 +288,57 @@ Three details that matter more than they look:
   because a oneshot service has no start timeout by default and
   `OnUnitActiveSec=` does not re-arm while the unit is still running: a
   `vcgencmd` blocked on a wedged mailbox would otherwise stop the recording
-  silently and for good.
+  silently and for good. Why five minutes and not thirty seconds has its
+  own section below.
 
 One line a minute is roughly 55 MB a year, which is why there is now also a
 `logrotate` config.
+
+### A busy board is not a broken one
+
+The first version of that unit used `TimeoutStartSec=30`, chosen as
+"generous for a job that takes three seconds". It was not, and the way it
+failed is worth keeping, because it is the mistake from the watchdog
+incident wearing different clothes: on this board, *everything* is
+contended.
+
+On 2026-10-28 a sync had 10.5 GB of new data to fetch, one 3.7 GB file
+among it, and ran from 03:10 until well past midday. During that window:
+
+- The recorder was killed three times - 04:19, 07:19, 09:19 - with `start
+  operation timed out`. A sample costs about 3 seconds normally, but its
+  append and its `sync -d` land on a FUSE pool that an active transfer
+  blocks in bursts; the measured gaps between samples reached 138 seconds.
+  Every kill leaves a **failed unit** behind until the timer fires again,
+  and a failed unit is exactly what `health-check.sh units` reports as a
+  fault. The monitor was being told the device was broken while it was
+  working.
+- `rclone` ran at `Nice=0` with 62-84 % of the single core and no idle time
+  left at all. A health check fetched over SSH, timed from the monitoring
+  machine's side, cost **8 to 23 seconds** instead of one or two.
+  `check_by_ssh` defaults to a 10 second timeout, so the checks began
+  timing out on their own - hours of alarms about a device doing its job.
+
+Both fixes are one idea: a limit has to mean what it says.
+
+- `TimeoutStartSec=300` on the recorder means "this recorder is wedged",
+  which is a real fault and worth failing over. "The pool kept me waiting"
+  is a different statement, so the script now makes that one itself, as a
+  `<4>` warning into the journal (`SLOW_RUN_WARN_SECONDS`, 20 s by
+  default) - `<4>` because `LogLevelMax=warning` is the only level that
+  unit lets through. The gaps in `conditions.log` now have their
+  explanation sitting next to them instead of a dead unit.
+- `drive-backup.service` runs with `Nice=5` and the lowest best-effort I/O
+  priority. Niceness costs the sync nothing while nothing else wants the
+  CPU - it only decides who yields when something does, and here that is
+  sshd, the recorder and PID 1. Same lesson as the watchdog incident, this
+  time applied before it bit: this board has no headroom to share, so say
+  who loses.
+
+The monitoring side needs the matching change, which is why
+`docs/monitoring.md` now sets an SSH check timeout well above what a loaded
+board needs, with retries, so that one slow poll stays a slow poll instead
+of an alarm.
 
 ### Nothing may grow without bound
 

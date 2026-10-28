@@ -29,6 +29,20 @@ POOL=${POOL:-/mnt/backup}
 LOG_DIR=${LOG_DIR:-$POOL/logs}
 LOG_FILE=${LOG_FILE:-$LOG_DIR/conditions.log}
 THERMAL_ZONE=${THERMAL_ZONE:-/sys/class/thermal/thermal_zone0/temp}
+# The three /proc files this script reads, as overridable paths for the same
+# reason THERMAL_ZONE is one: tests/test_sample_conditions.sh feeds fixtures
+# instead, so the expected output does not depend on the machine running the
+# tests - /proc/loadavg in particular does not exist everywhere a developer
+# might run them.
+LOADAVG=${LOADAVG:-/proc/loadavg}
+MEMINFO=${MEMINFO:-/proc/meminfo}
+UPTIME_FILE=${UPTIME_FILE:-/proc/uptime}
+
+# How long one sample may take before it is worth a journal line. The unit's
+# TimeoutStartSec is the "this recorder is wedged" limit; this is the much
+# lower "the pool kept me waiting" mark. The two together are what stops a
+# busy pool from being reported as a fault - see the block at the very end.
+SLOW_RUN_WARN_SECONDS=${SLOW_RUN_WARN_SECONDS:-20}
 
 # Nothing to write to, and nothing worth failing over: the pool being gone
 # is the backup script's problem to report, not this one's. The gap in the
@@ -42,16 +56,16 @@ mkdir -p "$LOG_DIR" 2>/dev/null || exit 0
 # assumes. Keep it a single token.
 throttled=$(vcgencmd get_throttled 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')
 temp=$(awk '{printf "%.1f", $1/1000}' "$THERMAL_ZONE" 2>/dev/null)
-load=$(cut -d' ' -f1 /proc/loadavg)
-memavail=$(awk '/^MemAvailable:/{printf "%dM", $2/1024}' /proc/meminfo)
-swapfree=$(awk '/^SwapFree:/{printf "%dM", $2/1024}' /proc/meminfo)
+load=$(cut -d' ' -f1 "$LOADAVG")
+memavail=$(awk '/^MemAvailable:/{printf "%dM", $2/1024}' "$MEMINFO")
+swapfree=$(awk '/^SwapFree:/{printf "%dM", $2/1024}' "$MEMINFO")
 # Uptime, because the wall clock cannot be trusted across the event this
 # file exists to explain: there is no RTC on this board, so after a hard
 # reset the clock is whatever fake-hwclock last saved until NTP steps it -
 # which can make the first line after a reset look *older* than the last
 # line before it. Uptime going backwards is clock-independent proof of a
 # restart, and the length of the gap is then readable too.
-up=$(cut -d' ' -f1 /proc/uptime)
+up=$(cut -d' ' -f1 "$UPTIME_FILE")
 
 # Which heavy job was running matters more than the bare numbers: it is what
 # distinguishes "idle box browned out" from "sync and package configure ran
@@ -79,3 +93,19 @@ printf '%s up=%s throttled=%s temp=%s load=%s memavail=%s swapfree=%s busy=%s\n'
 # cache. Deliberately "sync -d <file>" and not a bare "sync", which would
 # flush the SD card too.
 sync -d "$LOG_FILE" 2>/dev/null || true
+
+# A late sample is not a broken recorder - but the difference has to be
+# visible somewhere, or the gaps in the file above have no explanation at
+# all. This is the "the pool was blocking" report; the unit's
+# TimeoutStartSec is the "the recorder is wedged" one. Both exist because
+# conflating them cost three failed units and three monitoring alarms on
+# 2026-10-28, on a device that was doing nothing worse than a long sync.
+#
+# Deliberately the journal and not the log file: if the pool is what
+# blocked, writing more to the pool is the wrong answer. The <4> prefix
+# makes the line a warning, which is the one level the unit's LogLevelMax
+# lets through - without it systemd would file this at info and drop it.
+if [ "$SECONDS" -ge "$SLOW_RUN_WARN_SECONDS" ]; then
+	printf '<4>sample took %ss, over the %ss mark - the pool was blocking (busy=%s)\n' \
+		"$SECONDS" "$SLOW_RUN_WARN_SECONDS" "${busy:-none}" >&2
+fi
