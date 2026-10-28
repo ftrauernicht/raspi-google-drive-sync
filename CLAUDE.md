@@ -42,6 +42,12 @@ own infrastructure.
   `systemctl`, `pgrep`, `mountpoint` and `msmtp` through `PATH`; keep it
   that way, or the tests start depending on what happens to run on the
   machine executing them.
+- Same for `scripts/sample-conditions.sh` (`POOL`, `LOG_DIR`, `LOG_FILE`,
+  `THERMAL_ZONE`, `LOADAVG`, `MEMINFO`, `UPTIME_FILE`,
+  `SLOW_RUN_WARN_SECONDS`). The `/proc` paths are hooks on purpose:
+  `tests/test_sample_conditions.sh` feeds fixtures through them and stubs
+  `vcgencmd`, `pgrep` and `mountpoint` through `PATH`, so the expected
+  output does not depend on the machine running the tests.
 - **The update window must stay out of the backup window.** An update that
   configures packages while the sync is running starved PID 1 on real
   hardware until the watchdog reset the board mid-`dpkg`, twice, which

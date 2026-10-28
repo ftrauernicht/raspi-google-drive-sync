@@ -6,3 +6,23 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 ExecStart=/usr/local/bin/drive-backup.sh
+
+# Leave the board answerable while the transfer runs. Measured on
+# 2026-10-28: rclone ran at Nice=0 with 62-84% of the single core and no
+# idle time left at all, and a health check fetched over SSH then cost 8 to
+# 23 seconds instead of one or two. check_by_ssh defaults to a 10 second
+# timeout, so a sync that is simply doing its job raised monitoring alarms
+# for six hours (see docs/monitoring.md).
+#
+# Niceness costs the sync nothing while nothing else wants the CPU - it
+# only decides who yields when something does, and on this device that is
+# sshd, the condition recorder and PID 1. Which is also the lesson of the
+# incident in docs/architecture.md: this board has no headroom to share, so
+# say who loses.
+#
+# The I/O priority carries the same honest caveat as the recorder's: it
+# only bites under an I/O scheduler that honours it, and Pi OS usually runs
+# mq-deadline on USB disks.
+Nice=5
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

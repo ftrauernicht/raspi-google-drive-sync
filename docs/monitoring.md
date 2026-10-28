@@ -139,8 +139,21 @@ object Service "backup-sync" {
   vars.by_ssh_identity = "/var/lib/nagios/.ssh/pi-monitor"
   vars.by_ssh_command = "sync"
   check_interval = 30m
+  retry_interval = 5m
+  max_check_attempts = 3
+  vars.by_ssh_timeout = 60
 }
 ```
 
 Use one service per check name. Keep the intervals modest — this is a
 single-core ARMv6 board, and `updates` runs an `apt-get` simulation.
+
+The last three lines are not boilerplate. `check_by_ssh` defaults to a 10
+second timeout, and that is less than this board needs while it is busy:
+measured on a Pi 1 during a sync transferring a multi-gigabyte file, one
+check over SSH took **8 to 23 seconds**, against one to two on an idle
+board. The handshake and the login shell are CPU-bound and there was no
+idle CPU to be had, so every check went UNKNOWN for hours while nothing at
+all was wrong. The device's own half of that fix is in
+`systemd/drive-backup.service`, where the sync now yields the CPU to sshd;
+this half is what keeps a slow poll from becoming a page.

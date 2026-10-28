@@ -21,7 +21,22 @@ LogLevelMax=warning
 # vcgencmd blocked on a wedged firmware mailbox, or an fsync blocked on a
 # wedged USB disk, would stop the recording silently and for good - the one
 # outcome this unit must not have.
-TimeoutStartSec=30
+#
+# The first value tried here, 30 seconds, was too tight, and it turned a
+# busy pool into a broken unit. On 2026-10-28 a six-hour sync saturated the
+# single core, and systemd killed this unit at 04:19, 07:19 and 09:19;
+# every kill leaves a failed unit behind until the timer fires again, which
+# is precisely what an external monitor reports as a fault on a device that
+# is merely working. Measured on that board while the transfer ran: a
+# sample costs about 3 seconds, but the append and the fsync land on a FUSE
+# pool that the transfer blocks in bursts, and individual samples took more
+# than a minute.
+#
+# So the timeout has to mean "the recorder is wedged", not "the pool is
+# busy". Five minutes says the former. The latter is the script's own job to
+# report, which it does at warning level (SLOW_RUN_WARN_SECONDS) - the one
+# level LogLevelMax above still lets through.
+TimeoutStartSec=300
 
 # Lowest practical priority for CPU and disk. Honest about the limits: the
 # I/O class only bites under an I/O scheduler that honours it (BFQ or CFQ),
