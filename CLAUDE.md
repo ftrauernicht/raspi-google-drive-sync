@@ -42,12 +42,30 @@ own infrastructure.
   `systemctl`, `pgrep`, `mountpoint` and `msmtp` through `PATH`; keep it
   that way, or the tests start depending on what happens to run on the
   machine executing them.
+- Same for `scripts/prune-rolling-backups.sh` (`POOL`, `LOCAL_ROOT`,
+  `REMOTE`, `RULES_FILE`, `LOG_DIR`, `LOG_FILE`, `RCLONE_LSF_CMD`,
+  `DRY_RUN`) and `PRUNE_SCRIPT` in `drive-backup.sh`. `RCLONE_LSF_CMD` is
+  the important one: everything the retention rule knows about the source
+  comes through it, which is what lets `tests/test_prune_rolling_backups.sh`
+  exercise every branch — including an unreachable source — without a
+  Google account.
 - Same for `scripts/sample-conditions.sh` (`POOL`, `LOG_DIR`, `LOG_FILE`,
   `THERMAL_ZONE`, `LOADAVG`, `MEMINFO`, `UPTIME_FILE`,
   `SLOW_RUN_WARN_SECONDS`). The `/proc` paths are hooks on purpose:
   `tests/test_sample_conditions.sh` feeds fixtures through them and stubs
   `vcgencmd`, `pgrep` and `mountpoint` through `PATH`, so the expected
   output does not depend on the machine running the tests.
+- **Deleting from the backup needs both conditions, always.**
+  `scripts/prune-rolling-backups.sh` and the Takeout rule in
+  `drive-backup.sh` are the only code here that deletes, and each deletes a
+  copy only when it is (1) beyond its rule's keep count *and* (2) gone from
+  the source. Condition 1 is what survives a wiped Drive; condition 2 is
+  what stops `rclone copy` fetching the file straight back every night for
+  ever. A failed source listing must delete nothing. Do not "simplify"
+  either condition away, and keep
+  `tests/test_prune_rolling_backups.sh` plus the Takeout checks in
+  `tests/test_takeout_grouping.sh` covering both — the damage from getting
+  this wrong is silent in both directions.
 - **The update window must stay out of the backup window.** An update that
   configures packages while the sync is running starved PID 1 on real
   hardware until the watchdog reset the board mid-`dpkg`, twice, which
@@ -86,6 +104,10 @@ own infrastructure.
   bits, temperature, load, memory, which heavy job is running), because the
   journal is volatile and a reset would otherwise erase its own
   explanation.
+- `scripts/prune-rolling-backups.sh` — retention for rolling full backups
+  another device drops into Drive. Off unless
+  `/etc/drive-backup/prune.rules` exists. Runs as step 2 of
+  `drive-backup.sh`, before the space check.
 - `systemd/drive-backup.service` / `.timer` — the daily schedule.
 - `systemd/sample-conditions.service` / `.timer` — the condition log.
 - `logrotate/drive-backup` — keeps the logs on the pool bounded.

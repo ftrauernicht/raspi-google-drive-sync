@@ -72,4 +72,46 @@ else
 fi
 TESTS_RUN=$((TESTS_RUN + 1))
 
+# The Takeout rule is one of the two deliberate exceptions to "never
+# delete", and since 2026-10-28 it obeys the same second condition as
+# scripts/prune-rolling-backups.sh: a group beyond TAKEOUT_KEEP is deleted
+# only once Drive no longer has it. Deleting one Drive still holds would
+# make the next `rclone copy` fetch tens of gigabytes straight back, on
+# every run, for ever - and nothing would report a fault while it happened.
+remote_still_has() {  # remote_still_has <group> <listing>
+  printf '%s\n' "$2" | grep -q "^takeout-${1}T"
+}
+
+LISTING='takeout-20260726T172606Z-001.zip
+takeout-20260726T172607Z-2-001.zip'
+remote_still_has 20260726 "$LISTING" && r=yes || r=no
+assert_eq "$r" "yes" "a group Drive still has is recognised, and must therefore be kept"
+remote_still_has 20260601 "$LISTING" && r=yes || r=no
+assert_eq "$r" "no" "a group Drive has dropped is free to delete"
+# The literal T after the date is what stops a shorter date from matching a
+# longer one and sparing a group for ever by accident.
+remote_still_has 2026072 "$LISTING" && r=yes || r=no
+assert_eq "$r" "no" "a partial date does not match a longer one"
+
+# The guard has to stay wired in: without it the rule quietly goes back to
+# deleting exports Drive still has, and the first symptom is a sync that
+# transfers the same photo library every night.
+if grep -vE '^\s*#' ../scripts/drive-backup.sh | grep -q 'TAKEOUT_REMOTE_LISTED'; then
+  echo "PASS: the Takeout cleanup consults the source listing before deleting"
+else
+  echo "FAIL: the Takeout cleanup deletes without asking the source"
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+TESTS_RUN=$((TESTS_RUN + 1))
+
+# And the fail-safe direction: a listing that could not be fetched must keep
+# everything, not delete everything.
+if grep -vE '^\s*#' ../scripts/drive-backup.sh | grep -q 'TAKEOUT_REMOTE_LISTED" -eq 0'; then
+  echo "PASS: a source listing that failed keeps every local export"
+else
+  echo "FAIL: a failed source listing no longer protects the local exports"
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+TESTS_RUN=$((TESTS_RUN + 1))
+
 assert_summary

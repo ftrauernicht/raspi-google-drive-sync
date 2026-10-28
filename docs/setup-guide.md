@@ -149,7 +149,9 @@ everything reporting the Unix way — `apt-listchanges`, cron, `logrotate`,
    `/usr/local/bin/drive-backup.sh` on the Pi, `chmod +x` it. Same for
    [`scripts/sample-conditions.sh`](../scripts/sample-conditions.sh), the
    one-line-a-minute condition log that explains the next unexplained
-   reset (see [`architecture.md`](architecture.md)).
+   reset (see [`architecture.md`](architecture.md)), and
+   [`scripts/prune-rolling-backups.sh`](../scripts/prune-rolling-backups.sh),
+   which does nothing at all until you give it a rule in step 5 below.
 2. Install the [`systemd/`](../systemd/) unit files, then:
    ```
    systemctl daemon-reload
@@ -160,7 +162,26 @@ everything reporting the Unix way — `apt-listchanges`, cron, `logrotate`,
    `/etc/logrotate.d/drive-backup`, so the logs on the pool stay bounded.
    Debian's daily `logrotate.timer` picks it up from there; check it with
    `logrotate --debug /etc/logrotate.d/drive-backup`.
-4. Before trusting this in production, exercise the test hooks documented
+4. **Only if another device drops rolling full backups into your Drive**
+   — a Home Assistant "Automatic_backup_*.tar" every morning, a NAS
+   snapshot, anything that writes a fresh full copy of itself on a
+   schedule — give the retention rule something to do. Without this file
+   nothing is ever deleted, which is the stricter and safer default:
+   ```
+   install -d /etc/drive-backup
+   printf '%s\n' '14 Home Assistant/Automatic_backup_*.tar' \
+     > /etc/drive-backup/prune.rules
+   ```
+   One rule per line: the number of generations to keep, then a path
+   relative to the Drive copy. The directory part must be literal, only the
+   file name may be a pattern. Read
+   [`architecture.md`](architecture.md) before choosing the number — a copy
+   is deleted only when it is *both* beyond the keep count *and* gone from
+   Drive, so a count below what your source keeps simply has nothing it is
+   allowed to do. Check it first with
+   `DRY_RUN=1 /usr/local/bin/prune-rolling-backups.sh` and read the
+   `[prune] would delete` lines in `drive-backup.log`.
+5. Before trusting this in production, exercise the test hooks documented
    at the top of `drive-backup.sh` (`WARN_85`, `WARN_95`,
    `EXTRA_RCLONE_FLAGS`, `STALL_MINUTES`, `STALL_CHECK_INTERVAL`,
    `REBOOT_CMD`, `AUTO_REBOOT_ENABLED`) to safely exercise every branch —
@@ -238,6 +259,17 @@ just assuming they work:
       your own runs actually take in `drive-backup.log`.
 - [ ] The condition log is filling: `tail /mnt/backup/logs/conditions.log`
       shows a line a minute, and `busy=rclone` appears during a sync.
+- [ ] A long sync does not make the device report itself broken:
+      `systemctl is-failed sample-conditions.service` stays `inactive`
+      through one, and a check fetched over SSH while it runs comes back
+      inside your monitoring timeout (measured at 8–23 s on a Pi 1 — see
+      [`monitoring.md`](monitoring.md)).
+- [ ] If you set a retention rule: `DRY_RUN=1
+      /usr/local/bin/prune-rolling-backups.sh` names only files you are
+      willing to lose, and *nothing* when you temporarily set the keep
+      count above the number of files present. Then confirm the real run
+      leaves the newest generations and the unrelated files in that folder
+      alone.
 - [ ] Once a year: plug a drive into another PC and actually open a sample
       of files plus one Takeout archive, to confirm the backup is truly
       restorable, not just "present".
