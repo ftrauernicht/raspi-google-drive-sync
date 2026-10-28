@@ -76,6 +76,13 @@ the restore side.
   temperature, load, free memory, and which heavy job is running. The
   journal is in RAM to spare the SD card, which means a reset otherwise
   erases its own explanation.
+- **Retention where copying for ever is the wrong answer.** Drive is also
+  where other devices drop rolling full backups of themselves, and a pool
+  that never deletes keeps every generation ever made — 269 GB of them had
+  quietly accumulated on the real device, 40 % of everything it stored. An
+  optional rule keeps the newest N generations and deletes a copy only when
+  it is *both* beyond that count *and* gone from Drive, so neither a wiped
+  Drive nor an endless delete-and-download loop can follow from it.
 
 See [`docs/architecture.md`](docs/architecture.md) for the full reasoning
 behind every one of these, including the separate-notification-account
@@ -95,7 +102,8 @@ need it.
 | rclone stops making progress mid-write | rclone's live transfer stats are polled every 60 s. Not the log file, which keeps growing while the write side is dead, and not rclone's own `--timeout`, which covers the network side only | After 30 minutes without a byte and without a check, the process is killed and a mail goes out with the next steps |
 | rclone exits with an error | Exit status | Mail with what to do about it |
 | The Google Photos export has gone stale | Newest Takeout group older than 75 days | Reported, because a silently stopped export looks exactly like a finished one |
-| Old Takeout exports pile up | More than two groups present | Everything but the newest two is pruned |
+| Old Takeout exports pile up | More than two groups present | Everything but the newest two is pruned — but only once Drive itself no longer has it, or `rclone copy` would fetch the same tens of gigabytes straight back on the next run |
+| Another device drops a full backup of itself into Drive every day | Nothing at all. Drive keeps the newest few and quietly drops the rest; the pool, which never deletes, keeps every one ever made. On the real device that had reached 102 files and 269 GB — 40 % of everything stored — growing by 3.7 GB a day | An optional retention rule keeps the newest N generations. A copy goes only when it is both beyond that count and gone from Drive: the first condition means a wiped Drive still leaves N generations here, the second means the rule can never turn into a nightly delete-and-download loop |
 | The Pi itself dies | Nothing pings healthchecks.io at the end of a run | The external service raises the alarm. A `/start` signal at the beginning keeps a legitimately multi-day first sync from tripping it |
 | The notification mail cannot be sent | msmtp exits non-zero | Logged, and the run still fails. Since a failed run never pings the dead-man switch, the silence itself becomes the alarm |
 | An interrupted `dpkg` run stops all OS updates | Nothing — apt's daily script exits 0 and systemd calls it a success. `apt-get check` is asked directly, before every update attempt | One automatic `dpkg --configure -a`, then a mail saying what was done. If that did not fix it, a mail asks for a person; every such mail is capped at one a day so it is not buried under a retry. Not attempted at all while a sync is running, because that combination is what caused it — but after 48 hours of postponing, a mail goes out anyway |
@@ -105,7 +113,8 @@ need it.
 | Logs grow for the lifetime of the device | — | Capped at 20 MB with four generations, rotated on size, uncompressed on purpose (a gzip spike on one ARMv6 core is itself a risk, see above) |
 
 The deterministic parts of that are covered by [`tests/`](tests/): the stall
-accounting, the reboot cooldown arithmetic, the Takeout grouping, and the
+accounting, the reboot cooldown arithmetic, the Takeout grouping, the
+retention conditions, the condition-log format, and the
 health-check decisions. The
 reasoning behind each decision, including the two real bugs found while
 building the stall watchdog, is in

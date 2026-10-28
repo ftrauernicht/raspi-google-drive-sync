@@ -64,6 +64,55 @@ from `scripts/drive-backup.sh` — the sync still works, it just skips those
 files (and logs a `cannotDownloadAbusiveFile` error for each one, every run,
 for as long as they remain flagged).
 
+### Two deliberate exceptions to never deleting
+
+"Never delete" is the design, and it has exactly two exceptions. Both are
+narrow, both are written down, and both obey the same two conditions -
+because each condition catches a different way of getting this wrong.
+
+What they are for: Drive is not only where documents live, it is also where
+other devices drop rolling full backups of themselves. Home Assistant
+writes one 3.7 GB tar every morning. Drive keeps the ten newest and quietly
+drops the rest - the pool kept every single one. By 2026-10-28 that was 102
+files and 269 GB, 40 % of everything the device had stored, growing by
+3.7 GB a day, and nothing in the design would ever have stopped it. A full
+photo-library export every two months does the same thing more slowly,
+which is why the Takeout rule existed from the start.
+
+A local copy is deleted only when **both** of these hold:
+
+1. **It is not among the newest KEEP files of its rule.** The safety floor,
+   and what keeps the copy-only guarantee intact where it counts: wipe the
+   entire Drive folder and this deletes nothing at all, because the newest
+   KEEP are never candidates. Ransomware that empties Drive cannot walk the
+   pool empty behind it.
+2. **The source does not have it any more.** Not politeness - this is what
+   makes the rule terminate. Deleting a file Drive still holds means the
+   next `rclone copy` fetches it straight back: delete, download, delete,
+   download, for as many gigabytes as the rule covers, every night, over a
+   link that manages 200 KiB/s. Nothing would report a fault while it
+   happened; the sync would simply never be idle again.
+
+Condition 2 is also the one that was missing. The Takeout rule had shipped
+without it and had never yet had anything to delete - the pool held exactly
+`TAKEOUT_KEEP` groups when this was written, so the third export would have
+been the first to trigger it, and the first to re-download a photo library
+over a link that needs days for one. That is the honest version of how it
+was found: not by testing the old rule, but by having to state the
+conditions out loud for a new one.
+
+If the source cannot be listed at all, nothing is deleted that run. Both
+rules fail towards keeping files.
+
+`scripts/prune-rolling-backups.sh` holds the general form - a keep count
+and a file pattern per line in `/etc/drive-backup/prune.rules`, switched
+off entirely when that file does not exist. The Takeout rule stays inline
+in `drive-backup.sh`, because grouping by calendar day is specific to
+Takeout's own filenames (see the stall-watchdog section for why that
+grouping is not obvious either). Retention runs *before* the sync, so the
+space warning sees the pool as it is about to be, and a nearly full pool is
+never sent into a multi-gigabyte transfer with nothing reclaimed first.
+
 ## Why a separate Gmail account for notifications
 
 The notification emails are sent from a **dedicated** Google account,

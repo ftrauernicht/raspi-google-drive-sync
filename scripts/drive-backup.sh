@@ -22,6 +22,7 @@ WARN_95_MARKER="$STATE_DIR/.warned-95"
 PHOTO_STALE_DAYS=75
 TAKEOUT_KEEP=2
 HEALTHCHECK_URL_FILE=/etc/drive-backup/healthcheck-url
+PRUNE_SCRIPT=${PRUNE_SCRIPT:-/usr/local/bin/prune-rolling-backups.sh}
 
 # Test hooks (override via environment variable; defaults = normal operation).
 # Overriding these lets every branch of this script be exercised safely
@@ -162,7 +163,17 @@ if [ -f "$HEALTHCHECK_URL_FILE" ]; then
 fi
 rm -f "$REBOOT_MARKER"
 
-# 2. Gather status
+# 2. Retention for rolling full backups - switched off unless
+# /etc/drive-backup/prune.rules exists. Deliberately before the status
+# check below: the space warning should see the pool as it is about to be,
+# and a pool near full must not be sent into a multi-gigabyte transfer
+# without first reclaiming what it is allowed to reclaim. Never fatal -
+# housekeeping failing is no reason not to run the backup.
+if [ -x "$PRUNE_SCRIPT" ]; then
+  "$PRUNE_SCRIPT" || log "WARNING: the retention run failed - carrying on with the sync"
+fi
+
+# 3. Gather status
 DRIVE_ABOUT=$(rclone about gdrive: 2>&1) || DRIVE_ABOUT="(rclone about failed)"
 POOL_USAGE=$(df --output=pcent "$POOL" | tail -1 | tr -d ' %')
 POOL_DF=$(df -h "$POOL" | tail -1)
@@ -179,7 +190,7 @@ Latest Google Photos export: ${LATEST_TAKEOUT:-none found yet}"
 
 log "Status gathered: pool usage ${POOL_USAGE}%"
 
-# 3. Space check (thresholds overridable via WARN_85/WARN_95, see above)
+# 4. Space check (thresholds overridable via WARN_85/WARN_95, see above)
 if [ "$POOL_USAGE" -ge "$WARN_95" ]; then
   if [ ! -f "$WARN_95_MARKER" ]; then
     send_mail "[drive-backup] CRITICAL: storage ${POOL_USAGE}% full" "The backup storage is ${POOL_USAGE}% full. The sync keeps running regardless, until the disks are truly full. How to fix this:
@@ -205,7 +216,7 @@ else
   rm -f "$WARN_85_MARKER" "$WARN_95_MARKER"
 fi
 
-# 4. Photo-freshness check
+# 5. Photo-freshness check
 NEEDS_PHOTO_REMINDER=0
 PHOTO_REASON=""
 if [ -z "$LATEST_TAKEOUT" ]; then
@@ -229,7 +240,7 @@ if [ "$NEEDS_PHOTO_REMINDER" -eq 1 ]; then
 $STATUS_BLOCK"
 fi
 
-# 5. Sync (with the stall watchdog, via rclone's --rc live-stats interface)
+# 6. Sync (with the stall watchdog, via rclone's --rc live-stats interface)
 RC_ADDR=127.0.0.1:5572
 log "Starting rclone copy (EXTRA_RCLONE_FLAGS='$EXTRA_RCLONE_FLAGS', stall limit ${STALL_MINUTES}min)..."
 # shellcheck disable=SC2086
@@ -304,9 +315,10 @@ else
 $STATUS_BLOCK"
 fi
 
-# 6. Takeout cleanup rule (the one deliberate exception to "never delete" —
-# without it, a full photo-library export every 2 months would eventually
-# fill the pool)
+# 7. Takeout cleanup rule (one of the two deliberate exceptions to "never
+# delete" — without it, a full photo-library export every 2 months would
+# eventually fill the pool. The other is scripts/prune-rolling-backups.sh,
+# step 2, and both obey the same two conditions)
 if [ -d "$TAKEOUT_DIR" ]; then
   # Via a temp file rather than "mapfile < <(...)" - the process-substitution
   # form isn't wrong per se (the real bug turned out to be the variable name
@@ -331,18 +343,36 @@ if [ -d "$TAKEOUT_DIR" ]; then
   # non-reserved array name here.
   mapfile -t TAKEOUT_GROUPS < "$TAKEOUT_GROUPS_TMP"
   rm -f "$TAKEOUT_GROUPS_TMP"
+  # Never delete a group Drive still has: `rclone copy` would fetch it
+  # straight back on the next run, and a full photo-library export is tens
+  # of gigabytes over a link that manages 200 KiB/s - so the rule would
+  # delete and re-download the same export for ever, without ever
+  # reporting a fault. Caught before it could bite: when this was written
+  # the pool held exactly TAKEOUT_KEEP groups, so this rule had never yet
+  # had anything to delete. If the listing fails, nothing is deleted this
+  # run - same fail-safe as scripts/prune-rolling-backups.sh.
+  if REMOTE_TAKEOUT=$(rclone lsf --max-depth 1 gdrive:Takeout 2>/dev/null); then
+    TAKEOUT_REMOTE_LISTED=1
+  else
+    TAKEOUT_REMOTE_LISTED=0
+    log "WARNING: could not list gdrive:Takeout - keeping every local export this run"
+  fi
   TAKEOUT_GROUP_COUNT=${#TAKEOUT_GROUPS[@]}
   if [ "$TAKEOUT_GROUP_COUNT" -gt "$TAKEOUT_KEEP" ]; then
     KEEP_FROM=$(( TAKEOUT_GROUP_COUNT - TAKEOUT_KEEP ))
     for ((i=0; i<KEEP_FROM; i++)); do
       g="${TAKEOUT_GROUPS[$i]}"
+      if [ "$TAKEOUT_REMOTE_LISTED" -eq 0 ] || printf '%s\n' "$REMOTE_TAKEOUT" | grep -q "^takeout-${g}T"; then
+        log "Keeping old Takeout archives for $g - the source still has them"
+        continue
+      fi
       log "Deleting old Takeout archives for $g"
       find "$TAKEOUT_DIR" -maxdepth 1 -type f -name "takeout-${g}T*" -delete
     done
   fi
 fi
 
-# 7. Result
+# 8. Result
 log "=== Sync run finished successfully ==="
 if [ -f "$HEALTHCHECK_URL_FILE" ]; then
   HC_URL=$(cat "$HEALTHCHECK_URL_FILE")
