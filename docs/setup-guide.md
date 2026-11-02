@@ -259,6 +259,12 @@ just assuming they work:
       your own runs actually take in `drive-backup.log`.
 - [ ] The condition log is filling: `tail /mnt/backup/logs/conditions.log`
       shows a line a minute, and `busy=rclone` appears during a sync.
+- [ ] The sync check agrees with reality after the very first successful
+      run: `health-check.sh sync` says `from state file`, and
+      `/etc/drive-backup/state/last-success` holds a plausible epoch. If it
+      says `from log` instead, the stamp is not being written — which still
+      works, but puts you back to depending on the exact wording of a log
+      line (see [`monitoring.md`](monitoring.md)).
 - [ ] A long sync does not make the device report itself broken:
       `systemctl is-failed sample-conditions.service` stays `inactive`
       through one, and a check fetched over SSH while it runs comes back

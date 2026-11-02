@@ -28,8 +28,19 @@ MEMBER_DISKS=${MEMBER_DISKS:-"/mnt/disk1 /mnt/disk2"}
 DISK_WARN=${DISK_WARN:-85}
 DISK_CRIT=${DISK_CRIT:-95}
 SYNC_UNIT=${SYNC_UNIT:-drive-backup.service}
-# The line drive-backup.sh logs at the very end of a successful run. If you
-# translated the script's messages, set your own wording here.
+# The primary source: drive-backup.sh writes the epoch seconds of its last
+# successful run here, and nothing else. It exists because the marker below
+# is a *sentence*, and a sentence can be translated. On 2026-11-02 a device
+# whose script had been swapped from a translated copy to the upstream
+# English one reported CRITICAL for four days while every nightly run was in
+# fact finishing - SYNC_SUCCESS_MARKER still named the old wording, and
+# nothing in the output could tell that apart from a backup that really had
+# not run since Wednesday. A number cannot be mistranslated.
+SYNC_STAMP=${SYNC_STAMP:-/etc/drive-backup/state/last-success}
+# The fallback, and what older installations have: the line drive-backup.sh
+# logs at the very end of a successful run. If you translated the script's
+# messages, set your own wording here - but note that the stamp above makes
+# that a convenience rather than a requirement.
 SYNC_SUCCESS_MARKER=${SYNC_SUCCESS_MARKER:-"=== Sync run finished successfully ==="}
 # drive-backup.sh keeps its own log on the storage pool. That file is the
 # primary source here, because the journal does not survive a reboot on a Pi
@@ -121,6 +132,21 @@ broken_packages() {  # broken_packages <dpkg status file> -> names, space separa
 # Lines look like "2026-01-02 03:04:05 === Sync run finished successfully ===".
 # -a because the log also carries rclone's progress output, which contains
 # control characters - without it grep calls the file binary and prints nothing.
+last_success_from_stamp() {  # last_success_from_stamp <file> -> epoch seconds
+	local datei="$1" inhalt
+	[ -r "$datei" ] || return 1
+	IFS= read -r inhalt < "$datei" 2>/dev/null || return 1
+	inhalt=${inhalt//[[:space:]]/}
+	# Anything that is not purely digits is refused rather than coerced. A
+	# half-written or truncated stamp would otherwise turn into a confident
+	# date - most likely 1970 - and a confident wrong answer is worse here
+	# than falling through to the log.
+	case "$inhalt" in
+		''|*[!0-9]*) return 1 ;;
+	esac
+	echo "$inhalt"
+}
+
 last_success_from_log() {  # last_success_from_log <logfile> <marker> -> "YYYY-MM-DD HH:MM:SS"
 	local datei="$1" marker="$2" zeile stempel
 	local dateien=()
@@ -169,8 +195,12 @@ check_storage() {
 
 check_sync() {
 	local stempel line epoch now hours quelle
+	# The stamp first, for the reason given where SYNC_STAMP is defined.
+	if epoch=$(last_success_from_stamp "$SYNC_STAMP"); then
+		quelle="state file"
+	fi
 	# The log on the pool survives reboots; the journal does not (volatile).
-	if stempel=$(last_success_from_log "$SYNC_LOG" "$SYNC_SUCCESS_MARKER"); then
+	if [ -z "${epoch:-}" ] && stempel=$(last_success_from_log "$SYNC_LOG" "$SYNC_SUCCESS_MARKER"); then
 		epoch=$(date -d "$stempel" +%s 2>/dev/null) || epoch=""
 		quelle="log"
 	fi
@@ -181,6 +211,14 @@ check_sync() {
 		quelle="journal"
 	fi
 	if [ -z "${epoch:-}" ]; then
+		# No stamp, and the marker appears nowhere - but if the log is being
+		# written all the same, then the marker is what is wrong, not the
+		# backup. Say which, because "no successful run" sends someone
+		# looking in the wrong place for as long as it takes them to doubt
+		# the message. UNKNOWN, not CRITICAL: this check cannot tell.
+		if [ -r "$SYNC_LOG" ] && [ -n "$(find "$SYNC_LOG" -newermt '-48 hours' 2>/dev/null)" ]; then
+			finish 3 "no run marked successful, yet $SYNC_LOG was written within the last 48 h - either the first run has not finished yet, or SYNC_SUCCESS_MARKER in $HEALTH_CONFIG does not match the wording this script logs"
+		fi
 		finish 2 "no successful run found in $SYNC_LOG, and none in the journal for the last 14 days"
 	fi
 	now=$(date +%s)

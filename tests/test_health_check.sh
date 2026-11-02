@@ -86,4 +86,76 @@ NOW=1785100000
 assert_eq "$(hours_between $(( NOW - 30*3600 )) "$NOW")" "30" "30 hours apart"
 assert_eq "$(hours_between $(( NOW - 59*60 )) "$NOW")" "0" "59 minutes round down to 0 hours"
 
+
+# --- the success stamp: a number, because a sentence can be translated.
+# This is the regression test for four days of CRITICAL on a device that was
+# working perfectly: its drive-backup.sh had been swapped from a translated
+# copy to the upstream English one, SYNC_SUCCESS_MARKER still named the old
+# wording, and the check could not tell that apart from a backup that had
+# genuinely stopped on Wednesday.
+STAMP=/tmp/sync-stamp.$$
+printf '1785100000\n' > "$STAMP"
+assert_eq "$(last_success_from_stamp "$STAMP")" "1785100000" "a plain epoch stamp is read"
+printf '  1785100000  \n' > "$STAMP"
+assert_eq "$(last_success_from_stamp "$STAMP")" "1785100000" "surrounding whitespace is ignored"
+# A truncated or half-written stamp must be refused, not coerced: turning it
+# into 1970 would report a 500,000-hour-old backup with total confidence.
+printf 'not a number\n' > "$STAMP"
+assert_eq "$(last_success_from_stamp "$STAMP" || echo leer)" "leer" "a non-numeric stamp is refused, not coerced"
+printf '17851x00\n' > "$STAMP"
+assert_eq "$(last_success_from_stamp "$STAMP" || echo leer)" "leer" "digits with rubbish in them are refused too"
+: > "$STAMP"
+assert_eq "$(last_success_from_stamp "$STAMP" || echo leer)" "leer" "an empty stamp is refused"
+assert_eq "$(last_success_from_stamp /nonexistent/stamp || echo leer)" "leer" \
+	"a missing stamp reports failure, so the log fallback can run"
+rm -f "$STAMP"
+
+# --- check_sync: which source wins, and what it says when it cannot tell
+SLOG=/tmp/sync-log.$$
+MARKER='=== Sync run finished successfully ==='
+run_sync() {  # run_sync <stamp> <log> -> "<exit> <first line of output>"
+	local out rc=0
+	out=$(
+		SYNC_STAMP="$1"
+		SYNC_LOG="$2"
+		SYNC_SUCCESS_MARKER="$MARKER"
+		SYNC_WARN_HOURS=36
+		SYNC_CRIT_HOURS=54
+		check_sync
+	) || rc=$?
+	printf '%s %s' "$rc" "$out"
+}
+
+# The stamp wins even when the log's newest marker is days older - that is
+# precisely the case that was misreported.
+STAMP=/tmp/sync-stamp2.$$
+date +%s > "$STAMP"
+printf '2026-01-02 03:04:05 %s\n' "$MARKER" > "$SLOG"
+assert_eq "$(run_sync "$STAMP" "$SLOG" | cut -d' ' -f1)" "0" "a current stamp beats a stale log marker"
+assert_eq "$(run_sync "$STAMP" "$SLOG" | grep -c 'from state file')" "1" "and it says which source it used"
+
+# Without a stamp the log still works, exactly as before.
+assert_eq "$(run_sync /nonexistent/stamp "$SLOG" | grep -c 'from log')" "1" \
+	"with no stamp the log marker is still used"
+
+# A corrupt stamp must not shadow a perfectly good log.
+printf 'garbage\n' > "$STAMP"
+assert_eq "$(run_sync "$STAMP" "$SLOG" | grep -c 'from log')" "1" \
+	"a corrupt stamp falls through to the log instead of winning"
+
+# No stamp, no marker, but the log is being written: that is a wrong marker
+# or a first run still going - not "the backup has stopped". UNKNOWN, and the
+# message has to name the suspect, or the next person loses four days too.
+printf 'nothing of interest\n' > "$SLOG"
+rm -f "$STAMP"
+assert_eq "$(run_sync /nonexistent/stamp "$SLOG" | cut -d' ' -f1)" "3" \
+	"a current log without the marker is UNKNOWN, not CRITICAL"
+assert_eq "$(run_sync /nonexistent/stamp "$SLOG" | grep -c 'SYNC_SUCCESS_MARKER')" "1" \
+	"and the message names the setting to look at"
+
+# Nothing at all to go on stays CRITICAL.
+rm -f "$SLOG"
+assert_eq "$(run_sync /nonexistent/stamp /nonexistent/log | cut -d' ' -f1)" "2" \
+	"no stamp, no log and no journal is still critical"
+
 assert_summary
