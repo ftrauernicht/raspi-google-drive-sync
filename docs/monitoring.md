@@ -30,6 +30,35 @@ in `/etc/drive-backup/health.env`. The most likely ones to need changing:
 | `SYNC_LOG` | `$POOL/logs/drive-backup.log` | your log lives elsewhere |
 | `POOL`, `MEMBER_DISKS` | `/mnt/backup`, `/mnt/disk1 /mnt/disk2` | different mount points |
 
+### Why `sync` reads a number first, and a sentence only as a fallback
+
+`drive-backup.sh` writes the epoch seconds of its last successful run to
+`/etc/drive-backup/state/last-success`, and that is the first thing the
+`sync` check reads. Everything below about the log file still applies, but
+only as the fallback.
+
+The number exists because the alternative is a translated sentence. On
+2026-11-02 a device reported CRITICAL for four days — "last successful run
+124 h ago" — while every nightly run had in fact finished in about three
+hours. Its `drive-backup.sh` had been replaced with the upstream English
+copy a few days earlier, the translated wording was still configured in
+`SYNC_SUCCESS_MARKER`, and so the check kept finding the newest *German*
+success line, which was the last one the old script had written. Nothing in
+the output distinguished that from a backup that really had stopped on the
+Wednesday.
+
+Two things came out of it. The stamp, so that the monitor's primary source
+cannot be changed by editing prose. And a distinct message for the case
+where the marker appears nowhere at all although the log is still being
+written: that is now **UNKNOWN** with the name of the setting to look at,
+not a confident CRITICAL about a backup that may be running perfectly well.
+A check that cannot tell the two apart should say so rather than pick the
+frightening one.
+
+A truncated or non-numeric stamp is refused rather than coerced, and the
+check falls through to the log — a half-written file must not become a
+confident report of a backup last seen in 1970.
+
 ### Why `sync` reads the log file, and one rotated generation of it
 
 `scripts/01-setup-os-hardening.sh` reduces SD-card wear, and part of that is
@@ -113,12 +142,19 @@ chmod 600 /home/monitor/.ssh/authorized_keys
 ```
 
 If you translated the log messages of `drive-backup.sh`, tell the sync check
-what a successful run looks like:
+what a successful run looks like. Since the stamp described above exists this
+is no longer load-bearing — but it keeps the fallback honest, and it is what
+older installations rely on:
 
 ```bash
 install -d /etc/drive-backup
 echo 'SYNC_SUCCESS_MARKER="=== your translated success line ==="' > /etc/drive-backup/health.env
 ```
+
+If you ever replace a translated `drive-backup.sh` with the upstream one, or
+the other way round, change this line in the same breath. The stamp means
+you will no longer get four days of CRITICAL out of forgetting — but the
+fallback will be quietly wrong until you do.
 
 From the monitoring machine:
 

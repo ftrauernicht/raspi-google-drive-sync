@@ -66,6 +66,15 @@ own infrastructure.
   `tests/test_prune_rolling_backups.sh` plus the Takeout checks in
   `tests/test_takeout_grouping.sh` covering both — the damage from getting
   this wrong is silent in both directions.
+- **`drive-backup.sh` writes `$STATE_DIR/last-success` and
+  `health-check.sh` reads it first.** Keep both halves. The log line
+  `=== Sync run finished successfully ===` is a *translated sentence*, and
+  the monitor used to depend on it: replacing a translated copy of the
+  script with this one, without changing `SYNC_SUCCESS_MARKER`, produced
+  four days of CRITICAL on a device where every nightly run was finishing.
+  Epoch seconds cannot be mistranslated. If you change the wording of that
+  log line, say so in `docs/monitoring.md`; if you remove the stamp, you put
+  the old trap back.
 - **The update window must stay out of the backup window.** An update that
   configures packages while the sync is running starved PID 1 on real
   hardware until the watchdog reset the board mid-`dpkg`, twice, which

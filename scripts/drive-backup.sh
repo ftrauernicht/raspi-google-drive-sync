@@ -23,6 +23,9 @@ PHOTO_STALE_DAYS=75
 TAKEOUT_KEEP=2
 HEALTHCHECK_URL_FILE=/etc/drive-backup/healthcheck-url
 PRUNE_SCRIPT=${PRUNE_SCRIPT:-/usr/local/bin/prune-rolling-backups.sh}
+# What health-check.sh reads to answer "when did this last work". Deliberately
+# a number and not the log line below it - see the comment at the write.
+SYNC_STAMP="$STATE_DIR/last-success"
 
 # Test hooks (override via environment variable; defaults = normal operation).
 # Overriding these lets every branch of this script be exercised safely
@@ -374,6 +377,16 @@ fi
 
 # 8. Result
 log "=== Sync run finished successfully ==="
+# The same fact as a number, for the monitor. The line above is a sentence,
+# and a sentence gets translated: on 2026-11-02 a device whose script had
+# been swapped from a translated copy to this one reported CRITICAL for four
+# days while every nightly run was finishing, because health-check.sh was
+# still grepping for the old wording - and nothing in its output could tell
+# that apart from a backup that really had stopped. Never fatal: the log line
+# stays as the fallback, so an older or read-only state dir only costs the
+# improvement, not the check.
+printf '%s\n' "$(date +%s)" > "$SYNC_STAMP" 2>/dev/null \
+  || log "WARNING: could not write $SYNC_STAMP - the monitor falls back to the log marker"
 if [ -f "$HEALTHCHECK_URL_FILE" ]; then
   HC_URL=$(cat "$HEALTHCHECK_URL_FILE")
   curl -fsS -m 10 --retry 3 "$HC_URL" >/dev/null 2>&1 || log "WARNING: dead-man-switch ping failed"
